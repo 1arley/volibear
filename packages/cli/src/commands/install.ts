@@ -42,20 +42,15 @@ export async function runInstall(
     selection.executors = positionals.filter((e) => ALL_EXECUTORS.includes(e as never));
   }
 
-  // Default: if no executors selected, use all available.
+  // Default: use mock when no explicit executor is selected.
+  // The user must opt into a real executor by name.
   if (selection.executors.length === 0) {
-    selection.executors = [...ALL_EXECUTORS];
+    selection.executors = ['mock'];
   }
   selection.agents = [...ALL_AGENTS];
 
-  // Determine the default executor for agents.
-  const defaultExecutor = selection.executors[0] === 'opencode'
-    ? 'opencode'
-    : selection.executors[0] === 'codex'
-      ? 'codex'
-      : selection.executors[0] === 'claude'
-        ? 'claude'
-        : 'mock';
+  // The first selected executor is the default for all agents.
+  const defaultExecutor = selection.executors[0];
 
   const targetDir = selection.scope === 'global'
     ? resolve(getGlobalDir(), '.volibear')

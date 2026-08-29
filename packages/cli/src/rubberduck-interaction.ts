@@ -7,24 +7,32 @@ import {
   RubberduckQuestion,
 } from '@volibear/contracts';
 
-/** Terminal implementation of the human side of Rubberduck discovery. */
+/**
+ * Terminal implementation of the human side of Rubberduck discovery.
+ *
+ * The readline interface is created lazily on first answer, so pipelines that
+ * never reach the rubberduck stage do not hold an open TTY handle (which would
+ * keep the process alive and hang it).
+ */
 export class TerminalRubberduckInteraction implements RubberduckInteraction {
-  private readonly readline: Interface;
+  private readline: Interface | null = null;
 
-  constructor() {
-    this.readline = createInterface({ input: stdin, output: stdout });
+  private ensureReadline(): Interface {
+    if (!this.readline) {
+      this.readline = createInterface({ input: stdin, output: stdout });
+    }
+    return this.readline;
   }
 
   async answer(
     question: RubberduckQuestion,
     remainingBlocking: number,
   ): Promise<RubberduckAnswer> {
+    const rl = this.ensureReadline();
     console.log('\nRubberduck');
     console.log(`${remainingBlocking} blocking decision(s) remain.`);
     console.log(`\n${question.id} [${question.type}] ${question.text}`);
-    const input = (await this.readline.question(
-      'Answer (/delegate to decide for me, /pause to resume later): ',
-    )).trim();
+    const input = (await this.prompt(rl)).trim();
     if (input === '/delegate') return { kind: 'delegate' };
     if (input === '/pause') return { kind: 'pause' };
     if (!input) return this.answer(question, remainingBlocking);
@@ -32,19 +40,31 @@ export class TerminalRubberduckInteraction implements RubberduckInteraction {
   }
 
   async confirmLock(requirements: Requirements): Promise<boolean> {
+    const rl = this.ensureReadline();
     console.log('\nRequirements review');
     console.log(`Task: ${requirements.task}`);
     for (const decision of requirements.decisions) {
       console.log(`  ${decision.id}: ${decision.answer}`);
     }
-    const input = (await this.readline.question('Lock these requirements? [y/N]: '))
-      .trim()
-      .toLowerCase();
+    const input = (await this.prompt(rl)).trim().toLowerCase();
     return input === 'y' || input === 'yes';
   }
 
   close(): void {
-    this.readline.close();
+    this.readline?.close();
+    this.readline = null;
+  }
+
+  /**
+   * EOF/Ctrl-D surfaces as an AbortError on the readline promise. Treat it as a
+   * pause so partial discovery is preserved and the run stays resumable.
+   */
+  private async prompt(rl: Interface): Promise<string> {
+    try {
+      return await rl.question('');
+    } catch {
+      return '/pause';
+    }
   }
 }
 

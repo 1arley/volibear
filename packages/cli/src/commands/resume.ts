@@ -1,3 +1,4 @@
+import { stdin, stdout } from 'node:process';
 import { ExternalFindingsFile } from '@volibear/contracts';
 import { ArtifactStore } from '@volibear/core';
 import { CliOptions } from '../cli.js';
@@ -24,6 +25,14 @@ export async function runResume(_positional: string[], options: CliOptions): Pro
   }
 
   console.log(`Resuming run ${latest.id} (${latest.state})`);
+
+  // Non-interactive resume without --accept-defaults would re-pause silently.
+  // Detect this case and warn the user.
+  if (!options.acceptDefaults && !(stdin.isTTY && stdout.isTTY)) {
+    console.log('Non-interactive resume detected. Use --accept-defaults to delegate decisions automatically.');
+    return 2;
+  }
+
   try {
     const pipeline = await app.getPipeline(latest.pipeline);
     const findings = new ArtifactStore(app.runStore.runDir(latest.id))

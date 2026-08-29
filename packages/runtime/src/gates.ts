@@ -22,6 +22,8 @@ export interface GateParams {
   maxRepairCycles?: number;
   rejectOn?: string[];
   requiredArtifacts?: string[];
+  /** True when requirements.lock exists for this run. */
+  requirementsLocked?: boolean;
   extra?: Record<string, unknown>;
 }
 
@@ -60,6 +62,9 @@ export class RequirementsLockedGate implements Gate {
   evaluate(params: GateParams): GateResult {
     if (!params.requirements) {
       return { passed: false, gate: this.id, reason: 'requirements artifact missing' };
+    }
+    if (params.requirementsLocked === false) {
+      return { passed: false, gate: this.id, reason: 'requirements are not locked' };
     }
     return { passed: true, gate: this.id, reason: 'requirements present and locked' };
   }

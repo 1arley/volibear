@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -54,20 +54,70 @@ export abstract class CliExecutor implements Executor {
   protected abstract buildArgs(ctx: ExecutorContext): string[];
 
   async runAgent(ctx: ExecutorContext): Promise<ExecutorResult> {
+    const available = await this.detect();
+    if (!available) {
+      return this.missingBinaryError();
+    }
+
+    // Guard against interactive CLIs that would hang a headless invocation.
+    if (!this.capabilities.headless) {
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: `executor "${this.id}" does not declare headless support; refusing to run interactively`,
+      };
+    }
+
     const args = this.buildArgs(ctx);
     const prompt = buildAgentPrompt(ctx);
-    const res = spawnSync(this.binary, [...args, prompt], {
-      cwd: ctx.cwd,
-      env: { ...process.env, ...this.env(ctx) },
-      encoding: 'utf-8',
-      maxBuffer: 64 * 1024 * 1024,
+    const env = { ...process.env, ...this.env(ctx) };
+
+    // Use async spawn with a hard timeout. spawnSync would block the entire
+    // event loop, hiding the timeout from the rest of the runtime.
+    return new Promise((resolve) => {
+      let stdout = '';
+      let stderr = '';
+      let killed = false;
+      const child = spawn(this.binary, [...args, prompt], {
+        cwd: ctx.cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+      child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+      const timer = setTimeout(() => {
+        killed = true;
+        child.kill('SIGKILL');
+      }, 20_000);
+
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        resolve({
+          exitCode: 1,
+          stdout,
+          stderr: `${stderr}\nexecutor "${this.id}" error: ${err.message}`,
+        });
+      });
+
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (killed) {
+          resolve({
+            exitCode: 1,
+            stdout,
+            stderr: `executor "${this.id}" was killed after 20s timeout — likely an interactive CLI with no headless support`,
+          });
+        } else {
+          resolve({
+            exitCode: code ?? 1,
+            stdout,
+            stderr,
+            structured: this.parseStructuredOutput(stdout),
+          });
+        }
+      });
     });
-    return {
-      exitCode: res.status ?? 1,
-      stdout: res.stdout ?? '',
-      stderr: res.stderr ?? '',
-      structured: this.parseStructuredOutput(res.stdout ?? ''),
-    };
   }
 
   /** Subclasses parse structured JSON the CLI emits (if any). */

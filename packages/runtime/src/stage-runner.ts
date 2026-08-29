@@ -249,19 +249,30 @@ async function runLoopStage(
     ctx.repairCycle = cycle;
 
     // Run inner stages; on the first pass the developer agent runs, on
-    // subsequent passes the fixer agent replaces the developer.
+    // subsequent passes the fixer agent replaces the developer. The stage
+    // object is cloned so the parsed pipeline is never mutated.
     let blocked = false;
+    let waitingOutcome: { kind: 'waiting-for-user'; reason: string } | undefined;
     for (const inner of stage.stages) {
-      if (inner.type === 'agent' && inner.agent === 'developer' && cycle > 1) {
-        inner.agent = stage.fixer_agent;
+      const stageToRun: Stage =
+        inner.type === 'agent' && inner.agent === 'developer' && cycle > 1
+          ? { ...inner, agent: stage.fixer_agent }
+          : inner;
+      const outcome = await runStage(stageToRun, ctx);
+      if (outcome.kind === 'waiting-for-user') {
+        waitingOutcome = outcome;
+        blocked = true;
+        break;
       }
-      const outcome = await runStage(inner, ctx);
       if (outcome.kind !== 'continue') {
         blocked = true;
         break;
       }
     }
     events.record('repair.cycle.completed', ctx.runId, { cycle, blocked });
+
+    // Propagate waiting-for-user immediately — don't evaluate the loop gate.
+    if (waitingOutcome) return waitingOutcome;
 
     // Evaluate the loop gate (e.g. no-findings-above-threshold)
     const gateResult = gate.evaluate(buildGateParams(stage.gate, ctx));
@@ -309,5 +320,6 @@ function buildGateParams(gateId: string, ctx: StageRunContext): GateParams {
     repairCycle: ctx.repairCycle,
     maxRepairCycles: repair.max_cycles,
     rejectOn: repair.reject_on,
+    requirementsLocked: ctx.services.artifacts.readRaw('requirements.lock') !== null,
   };
 }

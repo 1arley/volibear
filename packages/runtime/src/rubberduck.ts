@@ -198,6 +198,14 @@ export class RubberduckSession {
     return requirements;
   }
 
+  /**
+   * True when the run already has a valid requirements.lock. A locked run can
+   * be resumed without re-running discovery.
+   */
+  isLocked(): boolean {
+    return this.state === 'LOCKED' && this.artifacts.readRaw('requirements.lock') !== null;
+  }
+
   /** Create requirements.lock only after the deterministic blocking check passes. */
   async lock(draft?: Requirements): Promise<Requirements> {
     const unresolved = this.blockingUnresolved();
@@ -208,8 +216,9 @@ export class RubberduckSession {
       throw new Error(`lock() called in state ${this.state}`);
     }
 
+    // A draft supplied by the caller was already persisted by reviewDraft();
+    // only regenerate (and persist) when no draft was passed in.
     const requirements = draft ?? await this.reviewDraft();
-    this.artifacts.write('requirements', requirements);
     this.artifacts.writeRaw('requirements.lock', JSON.stringify(requirements, null, 2));
     this.events.record('requirements.locked', this.runId, { version: requirements.version });
     this.transition('LOCKED');
