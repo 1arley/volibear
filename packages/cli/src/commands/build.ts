@@ -2,10 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { CliOptions } from '../cli.js';
 import { App } from '../app.js';
+import { createRubberduckInteraction } from '../rubberduck-interaction.js';
 
 /** Map a terminal run state to a status symbol. */
 export function terminalSymbol(result: string): string {
-  return { PASS: '✓', FAIL: '✗', BLOCKED: '◉' }[result] ?? '?';
+  return {
+    PASS: '✓',
+    FAIL: '✗',
+    BLOCKED: '◉',
+    WAITING_FOR_USER: '◉',
+  }[result] ?? '?';
 }
 
 /**
@@ -24,8 +30,11 @@ export async function runBuild(positional: string[], options: CliOptions): Promi
 
   try {
     const pipeline = await app.getPipeline(options.pipeline);
-    const orchestrator = app.createOrchestrator(runId, (stageId, r) => {
-      console.log(`  stage: ${stageId} [${r.state}]`);
+    const orchestrator = app.createOrchestrator(runId, {
+      rubberduckInteraction: createRubberduckInteraction(options.acceptDefaults),
+      onStage: (stageId, current) => {
+        console.log(`  stage: ${stageId} [${current.state}]`);
+      },
     });
 
     console.log(`Volibear run ${runId}`);
@@ -37,7 +46,7 @@ export async function runBuild(positional: string[], options: CliOptions): Promi
 
     const statusSymbol = terminalSymbol(result);
     console.log(`\n${statusSymbol} ${result}`);
-    return result === 'PASS' ? 0 : result === 'BLOCKED' ? 2 : 1;
+    return result === 'PASS' ? 0 : ['BLOCKED', 'WAITING_FOR_USER'].includes(result) ? 2 : 1;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     app.runStore.update(runId, { state: 'FAIL', error: message });

@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
 import {
+  AgentDefinition,
   Executor,
   ExecutorContext,
   Pipeline,
+  RubberduckInteraction,
   Stage,
-  AgentDefinition,
 } from '@volibear/contracts';
 import { EventLog, ArtifactStore } from '@volibear/core';
 import { GateRegistry, GateParams } from './gates.js';
@@ -34,10 +35,13 @@ export interface StageRunContext {
   getVerification: () => unknown;
   repairCycle: number;
   rubberduck?: RubberduckDriver;
+  rubberduckInteraction?: RubberduckInteraction;
+  findings?: unknown;
 }
 
 export type StageOutcome =
   | { kind: 'continue' }
+  | { kind: 'waiting-for-user'; reason: string }
   | { kind: 'gate-blocked'; gate: string; reason: string }
   | { kind: 'loop-exhausted'; reason: string }
   | { kind: 'fail'; error: string };
@@ -219,6 +223,8 @@ function runRubberduckStage(ctx: StageRunContext): Promise<StageOutcome> {
     artifacts,
     task: ctx.task,
     driver: ctx.rubberduck,
+    interaction: ctx.rubberduckInteraction,
+    findings: ctx.findings,
   });
 }
 

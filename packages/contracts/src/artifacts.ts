@@ -103,6 +103,7 @@ export type Implementation = z.infer<typeof ImplementationSchema>;
 // ── Artifact union ─────────────────────────────────────
 
 export const ArtifactKindSchema = z.enum([
+  'discovery',
   'requirements',
   'architecture',
   'implementation',

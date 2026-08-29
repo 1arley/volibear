@@ -42,3 +42,38 @@ export interface RubberduckDriver {
     questions: RubberduckQuestion[],
   ): Promise<Requirements>;
 }
+
+export const RubberduckStateSchema = z.enum([
+  'DISCOVERING',
+  'QUESTIONS_PENDING',
+  'ANSWERS_INCOMPLETE',
+  'REVIEW',
+  'LOCKED',
+]);
+
+export type RubberduckState = z.infer<typeof RubberduckStateSchema>;
+
+export const RubberduckSnapshotSchema = z.object({
+  version: z.literal(1),
+  state: RubberduckStateSchema,
+  task: z.string(),
+  questions: z.array(RubberduckQuestionSchema),
+  updated_at: z.string().datetime(),
+});
+
+export type RubberduckSnapshot = z.infer<typeof RubberduckSnapshotSchema>;
+
+export type RubberduckAnswer =
+  | { kind: 'answer'; answer: string }
+  | { kind: 'delegate' }
+  | { kind: 'pause' };
+
+/** Human interface for Rubberduck. Kept separate from the reasoning driver. */
+export interface RubberduckInteraction {
+  answer(
+    question: RubberduckQuestion,
+    remainingBlocking: number,
+  ): Promise<RubberduckAnswer>;
+  confirmLock(requirements: Requirements): Promise<boolean>;
+  close?(): void;
+}

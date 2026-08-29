@@ -9,10 +9,11 @@ import {
   RunStore,
 } from '@volibear/core';
 import {
-  BUILTIN_AGENTS,
   AgentDefinition,
+  BUILTIN_AGENTS,
   Pipeline,
   ProjectConfig,
+  RubberduckInteraction,
 } from '@volibear/contracts';
 import { PipelineParser, validatePipelineAgents, RunOrchestrator } from '@volibear/runtime';
 import { ExecutorRegistry, MockExecutor, MockRubberduckDriver } from '@volibear/executors';
@@ -119,7 +120,14 @@ export class App {
   /**
    * Create an orchestrator for a run.
    */
-  createOrchestrator(runId: string, onStage?: (stageId: string, run: import('@volibear/contracts').Run) => void) {
+  createOrchestrator(
+    runId: string,
+    options: {
+      onStage?: (stageId: string, run: import('@volibear/contracts').Run) => void;
+      rubberduckInteraction?: RubberduckInteraction;
+      findings?: unknown;
+    } = {},
+  ) {
     const runDir = this.runStore.runDir(runId);
     const events = new EventLog(runDir);
     const artifacts = new ArtifactStore(runDir);
@@ -135,7 +143,9 @@ export class App {
         verification: this.config.verification,
       },
       rubberduck: new MockRubberduckDriver(),
-      onStage,
+      rubberduckInteraction: options.rubberduckInteraction,
+      findings: options.findings,
+      onStage: options.onStage,
     });
   }
 }

@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { ExternalFindingsFileSchema } from '@volibear/contracts';
+import { ExternalFindingsFile, ExternalFindingsFileSchema } from '@volibear/contracts';
+import { ArtifactStore } from '@volibear/core';
 import { CliOptions } from '../cli.js';
 import { App } from '../app.js';
+import { createRubberduckInteraction } from '../rubberduck-interaction.js';
 import { terminalSymbol } from './build.js';
 
 /**
@@ -14,7 +16,8 @@ export async function runFix(positional: string[], options: CliOptions): Promise
   const app = await App.create(process.cwd(), options);
   const findingsFile = positional[0];
 
-  // Validate and load findings if provided
+  // Validate and load findings if provided.
+  let findings: ExternalFindingsFile | undefined;
   let findingsSummary = '';
   if (findingsFile) {
     const path = resolve(process.cwd(), findingsFile);
@@ -24,9 +27,9 @@ export async function runFix(positional: string[], options: CliOptions): Promise
     }
     try {
       const raw = JSON.parse(readFileSync(path, 'utf-8'));
-      const parsed = ExternalFindingsFileSchema.parse(raw);
-      findingsSummary = ` (${parsed.findings.length} findings imported)`;
-      console.log(`Imported ${parsed.findings.length} findings from ${findingsFile}`);
+      findings = ExternalFindingsFileSchema.parse(raw);
+      findingsSummary = ` (${findings.findings.length} findings imported)`;
+      console.log(`Imported ${findings.findings.length} findings from ${findingsFile}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`Invalid findings file: ${message}`);
@@ -41,11 +44,18 @@ export async function runFix(positional: string[], options: CliOptions): Promise
     `Fix external findings${findingsSummary}`,
     findingsFile,
   );
+  if (findings) {
+    new ArtifactStore(app.runStore.runDir(runId)).write('findings', findings);
+  }
 
   try {
     const pipeline = await app.getPipeline('fix');
-    const orchestrator = app.createOrchestrator(runId, (stageId, r) => {
-      console.log(`  stage: ${stageId} [${r.state}]`);
+    const orchestrator = app.createOrchestrator(runId, {
+      findings,
+      rubberduckInteraction: createRubberduckInteraction(options.acceptDefaults),
+      onStage: (stageId, current) => {
+        console.log(`  stage: ${stageId} [${current.state}]`);
+      },
     });
 
     console.log(`Volibear fix run ${runId}`);
@@ -55,7 +65,7 @@ export async function runFix(positional: string[], options: CliOptions): Promise
     const result = await orchestrator.run(pipeline, run);
     const statusSymbol = terminalSymbol(result);
     console.log(`\n${statusSymbol} ${result}`);
-    return result === 'PASS' ? 0 : result === 'BLOCKED' ? 2 : 1;
+    return result === 'PASS' ? 0 : ['BLOCKED', 'WAITING_FOR_USER'].includes(result) ? 2 : 1;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     app.runStore.update(runId, { state: 'FAIL', error: message });

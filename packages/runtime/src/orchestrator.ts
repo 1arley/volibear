@@ -1,7 +1,8 @@
 import {
-  Pipeline,
   AgentDefinition,
   Executor,
+  Pipeline,
+  RubberduckInteraction,
   Run,
   RunState,
 } from '@volibear/contracts';
@@ -21,8 +22,12 @@ export interface OrchestratorOptions {
     repair: { max_cycles: number; reject_on: string[] };
     verification: { commands: string[] };
   };
-  /** Injected Rubberduck driver; defaults to an immediate-lock driver */
+  /** Reasoning driver that discovers questions and produces requirements. */
   rubberduck?: import('@volibear/contracts').RubberduckDriver;
+  /** Optional human interaction; omit only for explicit headless execution. */
+  rubberduckInteraction?: RubberduckInteraction;
+  /** Structured external findings provided to discovery. */
+  findings?: unknown;
   /** Called after each stage for progress reporting */
   onStage?: (stageId: string, run: Run) => void;
 }
@@ -75,15 +80,33 @@ export class RunOrchestrator {
       executors: this.opts.executors,
       repairCycle: run.repair_cycle ?? 0,
       rubberduck: this.opts.rubberduck,
+      rubberduckInteraction: this.opts.rubberduckInteraction,
+      findings: this.opts.findings,
       getRequirements: () => this.services.artifacts.read('requirements'),
       getReview: () => this.services.artifacts.read('review'),
       getVerification: () => this.services.artifacts.read('verification'),
     };
 
     for (const stage of pipeline.stages) {
+      // Resume skips stages already persisted as complete.
+      if (run.completed_stages.includes(stage.id)) continue;
+
+      // Core safety invariant: Architect never runs without a locked spec.
+      if (stage.type === 'agent' && stage.agent === 'architect') {
+        const requirements = this.services.artifacts.read('requirements');
+        const lock = this.services.artifacts.readRaw('requirements.lock');
+        if (!requirements || !lock) {
+          const reason = 'Architect requires locked requirements';
+          events.record('run.blocked', run.id, { stage: stage.id, reason });
+          runStore.update(run.id, { state: 'BLOCKED', current_stage: stage.id, error: reason });
+          return 'BLOCKED';
+        }
+      }
+
       run = runStore.update(run.id, {
         state: stage.type === 'rubberduck' ? 'DISCOVERY' : stagePhase(stage.id),
         current_stage: stage.id,
+        error: undefined,
       }) ?? run;
       this.opts.onStage?.(stage.id, run);
 
@@ -93,10 +116,19 @@ export class RunOrchestrator {
       switch (outcome.kind) {
         case 'continue':
           run = runStore.update(run.id, {
-            completed_stages: [...run.completed_stages, stage.id],
+            completed_stages: [...new Set([...run.completed_stages, stage.id])],
             repair_cycle: ctx.repairCycle,
           }) ?? run;
           break;
+
+        case 'waiting-for-user': {
+          runStore.update(run.id, {
+            state: 'WAITING_FOR_USER',
+            current_stage: stage.id,
+            error: outcome.reason,
+          });
+          return 'WAITING_FOR_USER';
+        }
 
         case 'gate-blocked':
         case 'loop-exhausted': {

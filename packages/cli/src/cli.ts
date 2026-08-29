@@ -21,6 +21,7 @@ Options:
   --executor <name>           Select coding CLI
   --router <name>             Select routing layer
   --pipeline <name>           Select pipeline
+  --accept-defaults           Delegate blocking decisions (non-interactive)
   --help                      Show help
   --version                   Show version
 `;
@@ -34,6 +35,7 @@ export interface CliOptions {
   project?: boolean;
   global?: boolean;
   verbose?: boolean;
+  acceptDefaults?: boolean;
 }
 
 /**
@@ -72,6 +74,9 @@ export function parseArgs(
         break;
       case '--verbose':
         options.verbose = true;
+        break;
+      case '--accept-defaults':
+        options.acceptDefaults = true;
         break;
       default:
         if (arg.startsWith('--')) {

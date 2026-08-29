@@ -1,5 +1,8 @@
+import { ExternalFindingsFile } from '@volibear/contracts';
+import { ArtifactStore } from '@volibear/core';
 import { CliOptions } from '../cli.js';
 import { App } from '../app.js';
+import { createRubberduckInteraction } from '../rubberduck-interaction.js';
 
 /**
  * volibear resume — resume the latest interrupted run.
@@ -23,12 +26,18 @@ export async function runResume(_positional: string[], options: CliOptions): Pro
   console.log(`Resuming run ${latest.id} (${latest.state})`);
   try {
     const pipeline = await app.getPipeline(latest.pipeline);
-    const orchestrator = app.createOrchestrator(latest.id, (stageId, r) => {
-      console.log(`  stage: ${stageId} [${r.state}]`);
+    const findings = new ArtifactStore(app.runStore.runDir(latest.id))
+      .read<ExternalFindingsFile>('findings') ?? undefined;
+    const orchestrator = app.createOrchestrator(latest.id, {
+      findings,
+      rubberduckInteraction: createRubberduckInteraction(options.acceptDefaults),
+      onStage: (stageId, current) => {
+        console.log(`  stage: ${stageId} [${current.state}]`);
+      },
     });
     const result = await orchestrator.run(pipeline, latest);
     console.log(`\n${result}`);
-    return result === 'PASS' ? 0 : 1;
+    return result === 'PASS' ? 0 : ['BLOCKED', 'WAITING_FOR_USER'].includes(result) ? 2 : 1;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`\n✗ Resume failed: ${message}`);

@@ -11,10 +11,14 @@ import {
 import { RubberduckSession } from './rubberduck.js';
 import { MockExecutor, MockRubberduckDriver } from '@volibear/executors';
 import {
-  Requirements,
   AgentDefinition,
   BUILTIN_AGENTS,
   PipelineSchema,
+  Requirements,
+  RubberduckAnswer,
+  RubberduckInteraction,
+  RubberduckQuestion,
+  RubberduckSnapshot,
 } from '@volibear/contracts';
 import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
 import { RunOrchestrator } from './orchestrator.js';
@@ -247,6 +251,66 @@ describe('RubberduckSession', () => {
     // Cannot discover again
     await expect(session.discover()).rejects.toThrow();
   });
+
+  it('moves directly to REVIEW when discovery has no blocking questions', async () => {
+    const driver2 = new MockRubberduckDriver({
+      blockingQuestions: [],
+      optionalQuestions: ['Optional'],
+      inferableQuestions: [],
+    });
+    const session = new RubberduckSession('run-no-blocking', driver2, events, artifacts, 'task');
+    await session.discover();
+    expect(session.getState()).toBe('REVIEW');
+    await session.lock();
+    expect(session.getState()).toBe('LOCKED');
+  });
+
+  it('persists and restores exact partial answer state', async () => {
+    const driver2 = new MockRubberduckDriver({
+      blockingQuestions: ['B1', 'B2', 'B3'],
+      optionalQuestions: [],
+      inferableQuestions: [],
+    });
+    const first = new RubberduckSession('run-resume', driver2, events, artifacts, 'task');
+    await first.discover();
+    first.submitAnswer('Q2', 'answer only Q2');
+
+    const snapshot = artifacts.read<RubberduckSnapshot>('discovery');
+    expect(snapshot?.state).toBe('ANSWERS_INCOMPLETE');
+    expect(snapshot?.questions.find((question) => question.id === 'Q2')?.answer).toBe('answer only Q2');
+
+    const restored = new RubberduckSession(
+      'run-resume',
+      driver2,
+      events,
+      artifacts,
+      'task',
+      snapshot!,
+    );
+    expect(restored.blockingUnresolved().map((question) => question.id)).toEqual(['Q1', 'Q3']);
+  });
+
+  it('interactive flow pauses without creating requirements.lock', async () => {
+    const driver2 = new MockRubberduckDriver({
+      blockingQuestions: ['B1', 'B2', 'B3'],
+      optionalQuestions: [],
+      inferableQuestions: [],
+    });
+    const answers: RubberduckAnswer[] = [
+      { kind: 'answer', answer: 'answer Q1' },
+      { kind: 'pause' },
+    ];
+    const interaction: RubberduckInteraction = {
+      answer: async () => answers.shift()!,
+      confirmLock: async () => true,
+    };
+    const session = new RubberduckSession('run-pause', driver2, events, artifacts, 'task');
+    const result = await session.runInteractive(interaction);
+
+    expect(result.kind).toBe('waiting');
+    expect(session.blockingUnresolved().map((question) => question.id)).toEqual(['Q2', 'Q3']);
+    expect(artifacts.readRaw('requirements.lock')).toBeNull();
+  });
 });
 
 // ── Mock executor tests ────────────────────────────────
@@ -470,5 +534,99 @@ describe('RunOrchestrator (mock end-to-end)', () => {
     expect(events.filter('repair.started')).toHaveLength(1);
     const final = runStore.load('run-ok');
     expect(final?.state).toBe('PASS');
+  });
+
+  it('persists WAITING_FOR_USER and resumes discovery without rerunning completed stages', async () => {
+    const driver = new MockRubberduckDriver({
+      blockingQuestions: ['B1', 'B2', 'B3'],
+      optionalQuestions: [],
+      inferableQuestions: [],
+    });
+    const run = runStore.create('run-interactive', 'test-pipeline', 'interactive task');
+    const pipeline = makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+      { id: 'verifier', type: 'verify' },
+    ]);
+    const firstAnswers: RubberduckAnswer[] = [
+      { kind: 'answer', answer: 'answer Q1' },
+      { kind: 'pause' },
+    ];
+    const firstInteraction: RubberduckInteraction = {
+      answer: async () => firstAnswers.shift()!,
+      confirmLock: async () => true,
+    };
+    const first = new RunOrchestrator({
+      runStore,
+      events,
+      artifacts,
+      cwd: dir,
+      agents: agentsMap,
+      executors: executorsMap,
+      config: {
+        repair: { max_cycles: 3, reject_on: ['critical', 'high'] },
+        verification: { commands: ['echo ok'] },
+      },
+      rubberduck: driver,
+      rubberduckInteraction: firstInteraction,
+    });
+
+    expect(await first.run(pipeline, run)).toBe('WAITING_FOR_USER');
+    const waiting = runStore.load(run.id)!;
+    expect(waiting.state).toBe('WAITING_FOR_USER');
+    expect(waiting.completed_stages).toEqual([]);
+    expect(artifacts.readRaw('architecture.md')).toBeNull();
+
+    const secondInteraction: RubberduckInteraction = {
+      answer: async () => ({ kind: 'delegate' }),
+      confirmLock: async () => true,
+    };
+    const resumed = new RunOrchestrator({
+      runStore,
+      events,
+      artifacts,
+      cwd: dir,
+      agents: agentsMap,
+      executors: executorsMap,
+      config: {
+        repair: { max_cycles: 3, reject_on: ['critical', 'high'] },
+        verification: { commands: ['echo ok'] },
+      },
+      rubberduck: driver,
+      rubberduckInteraction: secondInteraction,
+    });
+
+    expect(await resumed.run(pipeline, waiting)).toBe('PASS');
+    expect(runStore.load(run.id)?.completed_stages).toEqual([
+      'rubberduck',
+      'architect',
+      'verifier',
+    ]);
+    const snapshot = artifacts.read<RubberduckSnapshot>('discovery');
+    expect(snapshot?.state).toBe('LOCKED');
+  });
+
+  it('blocks Architect deterministically when requirements.lock is absent', async () => {
+    const run = runStore.create('run-no-lock', 'test-pipeline', 'unsafe task');
+    const pipeline = makePipeline([
+      { id: 'architect', type: 'agent', agent: 'architect' },
+    ]);
+    const orchestrator = new RunOrchestrator({
+      runStore,
+      events,
+      artifacts,
+      cwd: dir,
+      agents: agentsMap,
+      executors: executorsMap,
+      config: {
+        repair: { max_cycles: 3, reject_on: ['critical', 'high'] },
+        verification: { commands: [] },
+      },
+      rubberduck: mockDriver,
+    });
+
+    expect(await orchestrator.run(pipeline, run)).toBe('BLOCKED');
+    expect(runStore.load(run.id)?.error).toBe('Architect requires locked requirements');
+    expect(artifacts.readRaw('architecture.md')).toBeNull();
   });
 });

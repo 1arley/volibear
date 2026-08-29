@@ -12,6 +12,7 @@ packages/*/dist/
 # test/coverage
 coverage/
 
-# editor
+# editor / local agent worktrees
 .vscode/
 .idea/
+.claude/worktrees/

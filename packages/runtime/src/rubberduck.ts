@@ -1,28 +1,25 @@
 import {
-  Requirements,
   Decision,
   QuestionType,
-  RubberduckQuestion,
+  Requirements,
+  RequirementsSchema,
   RubberduckDriver,
+  RubberduckInteraction,
+  RubberduckQuestion,
+  RubberduckSnapshot,
+  RubberduckSnapshotSchema,
+  RubberduckState,
 } from '@volibear/contracts';
-import { EventLog, ArtifactStore, BlockingQuestionError } from '@volibear/core';
+import { ArtifactStore, BlockingQuestionError, EventLog } from '@volibear/core';
 
-export type { QuestionType, RubberduckQuestion, RubberduckDriver };
-
-// ── Answer source ──────────────────────────────────────
-
-export type AnswerSource = 'user' | 'delegated';
-
-export type RubberduckState =
-  | 'DISCOVERING'
-  | 'QUESTIONS_PENDING'
-  | 'ANSWERS_INCOMPLETE'
-  | 'REVIEW'
-  | 'LOCKED';
-
-// ── Session state machine ──────────────────────────────
-// States: DISCOVERING → QUESTIONS_PENDING → ANSWERS_INCOMPLETE → REVIEW → LOCKED
-// The runtime decides whether unresolved blocking questions remain — never the model.
+export type {
+  QuestionType,
+  RubberduckDriver,
+  RubberduckInteraction,
+  RubberduckQuestion,
+  RubberduckSnapshot,
+  RubberduckState,
+};
 
 const VALID_TRANSITIONS: Record<RubberduckState, RubberduckState[]> = {
   DISCOVERING: ['QUESTIONS_PENDING'],
@@ -32,19 +29,41 @@ const VALID_TRANSITIONS: Record<RubberduckState, RubberduckState[]> = {
   LOCKED: [],
 };
 
+export type InteractiveRubberduckResult =
+  | { kind: 'locked'; requirements: Requirements }
+  | { kind: 'waiting'; reason: string };
+
+/**
+ * Strict discovery state machine. The driver proposes questions and defaults;
+ * this class alone decides whether the workflow may lock requirements.
+ */
 export class RubberduckSession {
-  private state: RubberduckState = 'DISCOVERING';
-  private questions: RubberduckQuestion[] = [];
-  private task: string;
+  private state: RubberduckState;
+  private questions: RubberduckQuestion[];
+  private readonly task: string;
 
   constructor(
-    private runId: string,
-    private driver: RubberduckDriver,
-    private events: EventLog,
-    private artifacts: ArtifactStore,
+    private readonly runId: string,
+    private readonly driver: RubberduckDriver,
+    private readonly events: EventLog,
+    private readonly artifacts: ArtifactStore,
     task: string,
+    snapshot?: RubberduckSnapshot,
   ) {
-    this.task = task;
+    if (snapshot) {
+      const restored = RubberduckSnapshotSchema.parse(snapshot);
+      if (restored.task !== task) {
+        throw new Error('discovery snapshot task does not match the run task');
+      }
+      this.state = restored.state;
+      this.questions = restored.questions.map((question) => ({ ...question }));
+      this.task = restored.task;
+    } else {
+      this.state = 'DISCOVERING';
+      this.questions = [];
+      this.task = task;
+      this.persist();
+    }
   }
 
   getState(): RubberduckState {
@@ -52,82 +71,102 @@ export class RubberduckSession {
   }
 
   getQuestions(): RubberduckQuestion[] {
-    return [...this.questions];
+    return this.questions.map((question) => ({ ...question }));
+  }
+
+  snapshot(): RubberduckSnapshot {
+    return {
+      version: 1,
+      state: this.state,
+      task: this.task,
+      questions: this.getQuestions(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  private persist(): void {
+    this.artifacts.write('discovery', this.snapshot());
   }
 
   private transition(next: RubberduckState): void {
     const from = this.state;
-    const allowed = VALID_TRANSITIONS[from];
-    if (!allowed.includes(next)) {
-      throw new Error(
-        `invalid Rubberduck transition ${from} → ${next}`,
-      );
+    if (!VALID_TRANSITIONS[from].includes(next)) {
+      throw new Error(`invalid Rubberduck transition ${from} → ${next}`);
     }
     this.state = next;
-    this.events.record('rubberduck.state.changed', this.runId, {
-      from,
-      to: next,
-    });
+    this.events.record('rubberduck.state.changed', this.runId, { from, to: next });
+    this.persist();
   }
 
-  /**
-   * Run discovery: the driver inspects the task and produces questions.
-   */
+  /** Ask the driver to discover decisions required for the task. */
   async discover(context: { findings?: unknown } = {}): Promise<RubberduckQuestion[]> {
     if (this.state !== 'DISCOVERING') {
       throw new Error(`discover() called in state ${this.state}`);
     }
+
     this.questions = await this.driver.discover(this.task, context);
-    for (const q of this.questions) {
+    const ids = new Set<string>();
+    for (const question of this.questions) {
+      if (ids.has(question.id)) {
+        throw new Error(`duplicate Rubberduck question id "${question.id}"`);
+      }
+      ids.add(question.id);
       this.events.record('rubberduck.question.created', this.runId, {
-        id: q.id,
-        type: q.type,
+        id: question.id,
+        type: question.type,
       });
     }
+
     this.transition('QUESTIONS_PENDING');
+    if (this.allBlockingAnswered()) {
+      this.transition('REVIEW');
+    }
     return this.getQuestions();
   }
 
-  /**
-   * Submit an answer for a question.
-   * Returns true if the session transitioned to REVIEW (all blocking answered).
-   * Throws if the question id is unknown.
-   */
-  submitAnswer(questionId: string, input: string): {
-    reviewReady: boolean;
-    question: RubberduckQuestion;
-  } {
-    const q = this.questions.find((x) => x.id === questionId);
-    if (!q) {
-      throw new Error(`unknown question "${questionId}"`);
+  /** Record one exact answer without inferring answers for other questions. */
+  submitAnswer(
+    questionId: string,
+    input: string,
+  ): { reviewReady: boolean; question: RubberduckQuestion } {
+    if (!['QUESTIONS_PENDING', 'ANSWERS_INCOMPLETE'].includes(this.state)) {
+      throw new Error(`submitAnswer() called in state ${this.state}`);
     }
+    if (!input.trim()) {
+      throw new Error('answer cannot be empty');
+    }
+
+    const question = this.requireQuestion(questionId);
+    question.answer = input.trim();
+    question.answer_source = 'user';
+    question.selected_by = 'user';
+    question.approved_by_user = true;
     this.events.record('rubberduck.question.answered', this.runId, {
       id: questionId,
       source: 'user',
     });
-    q.answer = input;
-    q.answer_source = 'user';
-    q.selected_by = 'user';
-    q.approved_by_user = true;
 
     const ready = this.allBlockingAnswered();
     this.transition(ready ? 'REVIEW' : 'ANSWERS_INCOMPLETE');
-    return { reviewReady: ready, question: { ...q } };
+    return { reviewReady: ready, question: { ...question } };
   }
 
-  /**
-   * Delegate a decision to the driver (user typed "decide for me").
-   */
+  /** Resolve one question using a driver-selected default approved by the user. */
   async delegate(questionId: string): Promise<RubberduckQuestion> {
-    const q = this.questions.find((x) => x.id === questionId);
-    if (!q) {
-      throw new Error(`unknown question "${questionId}"`);
+    if (!['QUESTIONS_PENDING', 'ANSWERS_INCOMPLETE'].includes(this.state)) {
+      throw new Error(`delegate() called in state ${this.state}`);
     }
-    const decision = await this.driver.decide(q, this.task);
-    q.answer = decision.answer;
-    q.answer_source = 'delegated';
-    q.selected_by = decision.selectedBy;
-    q.approved_by_user = true;
+
+    const question = this.requireQuestion(questionId);
+    const decision = await this.driver.decide(question, this.task);
+    if (!decision.answer.trim()) {
+      throw new Error(`driver returned an empty delegated answer for "${questionId}"`);
+    }
+
+    question.answer = decision.answer.trim();
+    question.answer_source = 'delegated';
+    question.selected_by = decision.selectedBy;
+    question.approved_by_user = true;
     this.events.record('rubberduck.question.answered', this.runId, {
       id: questionId,
       source: 'delegated',
@@ -136,43 +175,31 @@ export class RubberduckSession {
 
     const ready = this.allBlockingAnswered();
     this.transition(ready ? 'REVIEW' : 'ANSWERS_INCOMPLETE');
-    return { ...q };
+    return { ...question };
   }
 
-  /**
-   * Deterministic check: are all BLOCKING questions answered?
-   * This is the core strictness rule. The runtime decides this, never the model.
-   */
   allBlockingAnswered(): boolean {
     return this.blockingUnresolved().length === 0;
   }
 
-  /**
-   * List blocking questions that have no answer.
-   */
   blockingUnresolved(): RubberduckQuestion[] {
-    return this.questions.filter(
-      (q) => q.type === 'BLOCKING' && q.answer === undefined,
-    );
+    return this.questions
+      .filter((question) => question.type === 'BLOCKING' && question.answer === undefined)
+      .map((question) => ({ ...question }));
   }
 
-  /**
-   * Return the requirements draft (for REVIEW state).
-   */
   async reviewDraft(): Promise<Requirements> {
     if (this.state !== 'REVIEW') {
       throw new Error(`reviewDraft() called in state ${this.state}`);
     }
-    const requirements = await this.driver.generateRequirements(this.task, this.questions);
+    const generated = await this.driver.generateRequirements(this.task, this.getQuestions());
+    const requirements = RequirementsSchema.parse(generated);
     this.artifacts.write('requirements', requirements);
     return requirements;
   }
 
-  /**
-   * Lock the requirements. Refuses while any blocking question is unresolved.
-   * The runtime (not the model) decides whether all blocking questions are answered.
-   */
-  async lock(): Promise<Requirements> {
+  /** Create requirements.lock only after the deterministic blocking check passes. */
+  async lock(draft?: Requirements): Promise<Requirements> {
     const unresolved = this.blockingUnresolved();
     if (unresolved.length > 0) {
       throw new BlockingQuestionError(unresolved.length);
@@ -181,57 +208,96 @@ export class RubberduckSession {
       throw new Error(`lock() called in state ${this.state}`);
     }
 
-    const requirements = await this.reviewDraft();
-    // Persist the lock file
-    this.artifacts.writeRaw(
-      'requirements.lock',
-      JSON.stringify(requirements, null, 2),
-    );
-    this.events.record('requirements.locked', this.runId, {
-      version: requirements.version,
-    });
+    const requirements = draft ?? await this.reviewDraft();
+    this.artifacts.write('requirements', requirements);
+    this.artifacts.writeRaw('requirements.lock', JSON.stringify(requirements, null, 2));
+    this.events.record('requirements.locked', this.runId, { version: requirements.version });
     this.transition('LOCKED');
     return requirements;
   }
 
-  /**
-   * Headless/automated flow: discover, answer every blocking question
-   * through the driver, and lock. Used by the mock runtime; the interactive
-   * CLI replaces this with real user answers. Strictly refuses to lock if any
-   * blocking question remains unresolved.
-   */
+  /** Headless flow used by tests and explicit non-interactive execution. */
   async runToLocked(context: { findings?: unknown } = {}): Promise<Requirements> {
-    await this.discover(context);
+    if (this.state === 'LOCKED') {
+      const existing = this.artifacts.read<Requirements>('requirements');
+      if (!existing) throw new Error('locked discovery is missing requirements.json');
+      return RequirementsSchema.parse(existing);
+    }
+    if (this.state === 'DISCOVERING') {
+      await this.discover(context);
+    }
+    for (const question of this.blockingUnresolved()) {
+      await this.delegate(question.id);
+    }
+    return this.lock();
+  }
 
-    // Resolve every blocking question through the driver. If the driver leaves
-    // any unresolved, lock() throws — the pipeline cannot proceed.
-    for (const q of this.blockingUnresolved()) {
-      await this.delegate(q.id);
+  /** Interactive flow that can pause and later resume from discovery.json. */
+  async runInteractive(
+    interaction: RubberduckInteraction,
+    context: { findings?: unknown } = {},
+  ): Promise<InteractiveRubberduckResult> {
+    if (this.state === 'LOCKED') {
+      const existing = this.artifacts.read<Requirements>('requirements');
+      if (!existing) throw new Error('locked discovery is missing requirements.json');
+      return { kind: 'locked', requirements: RequirementsSchema.parse(existing) };
+    }
+    if (this.state === 'DISCOVERING') {
+      await this.discover(context);
     }
 
-    // Transition into REVIEW happens via delegate/submitAnswer above.
-    return this.lock();
+    while (!this.allBlockingAnswered()) {
+      const unresolved = this.blockingUnresolved();
+      const question = unresolved[0];
+      const answer = await interaction.answer(question, unresolved.length);
+      if (answer.kind === 'pause') {
+        this.persist();
+        return {
+          kind: 'waiting',
+          reason: `${unresolved.length} blocking question(s) remain unanswered`,
+        };
+      }
+      if (answer.kind === 'delegate') {
+        await this.delegate(question.id);
+      } else {
+        this.submitAnswer(question.id, answer.answer);
+      }
+    }
+
+    const draft = await this.reviewDraft();
+    if (!await interaction.confirmLock(draft)) {
+      this.persist();
+      return { kind: 'waiting', reason: 'requirements lock was not approved' };
+    }
+    return { kind: 'locked', requirements: await this.lock(draft) };
   }
 
   toDecisions(): Decision[] {
     return this.questions
-      .filter((q) => q.answer !== undefined)
-      .map((q) => ({
-        id: q.id,
-        question: q.text,
-        answer: q.answer!,
-        answer_source: (q.answer_source ?? 'user') as Decision['answer_source'],
-        selected_by: q.selected_by,
-        approved_by_user: q.approved_by_user ?? true,
+      .filter((question) => question.answer !== undefined)
+      .map((question) => ({
+        id: question.id,
+        question: question.text,
+        answer: question.answer!,
+        answer_source: question.answer_source ?? 'user',
+        selected_by: question.selected_by,
+        approved_by_user: question.approved_by_user ?? true,
       }));
+  }
+
+  private requireQuestion(questionId: string): RubberduckQuestion {
+    const question = this.questions.find((candidate) => candidate.id === questionId);
+    if (!question) throw new Error(`unknown question "${questionId}"`);
+    return question;
   }
 }
 
-// ── Stage runner glue ──────────────────────────────────
+export type RubberduckStageResult =
+  | { kind: 'continue' }
+  | { kind: 'waiting-for-user'; reason: string }
+  | { kind: 'fail'; error: string };
 
-/**
- * Runs the rubberduck stage to completion (LOCKED).
- */
+/** Run the Rubberduck stage using either a human interaction or headless defaults. */
 export async function runRubberduck(
   runId: string,
   opts: {
@@ -239,24 +305,35 @@ export async function runRubberduck(
     artifacts: ArtifactStore;
     task: string;
     driver?: RubberduckDriver;
+    interaction?: RubberduckInteraction;
     findings?: unknown;
   },
-): Promise<{ kind: 'continue' } | { kind: 'fail'; error: string }> {
-  if (!opts.driver) {
-    return { kind: 'fail', error: 'no rubberduck driver configured' };
-  }
-  const session = new RubberduckSession(
-    runId,
-    opts.driver,
-    opts.events,
-    opts.artifacts,
-    opts.task,
-  );
+): Promise<RubberduckStageResult> {
+  if (!opts.driver) return { kind: 'fail', error: 'no rubberduck driver configured' };
+
   try {
+    const rawSnapshot = opts.artifacts.read<RubberduckSnapshot>('discovery');
+    const snapshot = rawSnapshot ? RubberduckSnapshotSchema.parse(rawSnapshot) : undefined;
+    const session = new RubberduckSession(
+      runId,
+      opts.driver,
+      opts.events,
+      opts.artifacts,
+      opts.task,
+      snapshot,
+    );
+    if (opts.interaction) {
+      const result = await session.runInteractive(opts.interaction, { findings: opts.findings });
+      return result.kind === 'waiting'
+        ? { kind: 'waiting-for-user', reason: result.reason }
+        : { kind: 'continue' };
+    }
     await session.runToLocked({ findings: opts.findings });
     return { kind: 'continue' };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return { kind: 'fail', error: message };
+  } finally {
+    opts.interaction?.close?.();
   }
 }
