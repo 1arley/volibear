@@ -681,6 +681,55 @@ describe('RunOrchestrator (mock end-to-end)', () => {
     expect(final?.completed_stages).toContain('verifier');
   });
 
+  it('passes external findings context to the developer executor', async () => {
+    const run = runStore.create('run-findings', 'fix-pipeline', 'Fix external findings', 'external.json');
+    const pipeline = makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+      { id: 'developer', type: 'agent', agent: 'developer' },
+      { id: 'verifier', type: 'verify' },
+    ]);
+
+    // Capture the ExecutorContext passed to the developer executor
+    let capturedContext: Parameters<typeof mockExecutor.runAgent>[0] | undefined;
+    const capturingExecutor = new MockExecutor();
+    const originalRunAgent = capturingExecutor.runAgent.bind(capturingExecutor);
+    capturingExecutor.runAgent = async (ctx) => {
+      if (ctx.agent === 'developer') capturedContext = ctx;
+      return originalRunAgent(ctx);
+    };
+
+    const findings = {
+      findings: [
+        { id: 'F001', severity: 'high' as const, title: 'Duplicate records', recommendation: 'Add unique constraint' },
+      ],
+    };
+    const artifactsWithFindings = new ArtifactStore(dir);
+    artifactsWithFindings.write('findings', findings);
+
+    const orchestrator = new RunOrchestrator({
+      runStore,
+      events,
+      artifacts,
+      cwd: dir,
+      agents: agentsMap,
+      executors: new Map([['mock', capturingExecutor]]),
+      config: {
+        repair: { max_cycles: 3, reject_on: ['critical', 'high'] },
+        verification: { commands: ['echo ok'] },
+      },
+      rubberduck: mockDriver,
+      findings,
+      onStage: undefined,
+    });
+
+    await orchestrator.run(pipeline, run);
+
+    expect(capturedContext?.findingsFile).toContain('findings.json');
+    expect(capturedContext?.context).toContain('[high] F001: Duplicate records');
+    expect(capturedContext?.context).toContain('Add unique constraint');
+  });
+
   it('blocks after max repair cycles exhausted', async () => {
     const alwaysReject = [
       { id: 'F1', severity: 'high' as const, title: 'Persistent bug' },

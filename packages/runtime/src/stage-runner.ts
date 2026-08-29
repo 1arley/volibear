@@ -37,6 +37,7 @@ export interface StageRunContext {
   rubberduck?: RubberduckDriver;
   rubberduckInteraction?: RubberduckInteraction;
   findings?: unknown;
+  findingsFile?: string;
 }
 
 export type StageOutcome =
@@ -140,6 +141,8 @@ async function runAgentStage(
     model: agent.model,
     router: agent.router,
     permissions: stage.permissions ?? agent.permissions,
+    findingsFile: ctx.findingsFile,
+    context: buildFindingsContext(ctx.findings),
   };
 
   try {
@@ -276,6 +279,20 @@ async function runLoopStage(
     kind: 'loop-exhausted',
     reason: `${stage.id} exceeded ${maxCycles} repair cycles; human intervention required`,
   };
+}
+
+/** Build a findings context string from structured findings. */
+function buildFindingsContext(findings: unknown): string | undefined {
+  if (!findings) return undefined;
+  try {
+    const parsed = findings as { findings?: Array<{ id: string; severity: string; title: string; recommendation?: string }> };
+    if (!parsed.findings || !Array.isArray(parsed.findings)) return undefined;
+    return parsed.findings
+      .map((f) => `  [${f.severity}] ${f.id}: ${f.title}${f.recommendation ? ` — ${f.recommendation}` : ''}`)
+      .join('\n');
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Gate params builder ────────────────────────────────

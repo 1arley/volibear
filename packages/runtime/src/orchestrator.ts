@@ -82,6 +82,11 @@ export class RunOrchestrator {
       rubberduck: this.opts.rubberduck,
       rubberduckInteraction: this.opts.rubberduckInteraction,
       findings: this.opts.findings,
+      findingsFile: run.findings_file
+        ? this.services.artifacts.exists('findings')
+          ? `${this.services.artifacts.dir}/findings.json`
+          : run.findings_file
+        : undefined,
       getRequirements: () => this.services.artifacts.read('requirements'),
       getReview: () => this.services.artifacts.read('review'),
       getVerification: () => this.services.artifacts.read('verification'),
