@@ -1,15 +1,21 @@
 import { Executor } from '@volibear/contracts';
 import { MockExecutor } from './mock.js';
+import { OpenCodeExecutor } from './opencode.js';
+import { CodexExecutor } from './codex.js';
+import { ClaudeExecutor } from './claude.js';
 
 /**
  * Executor registry — resolves executor ids to implementations.
- * Real executors (opencode, codex, claude) will register here.
+ * Real executors (opencode, codex, claude) are registered alongside the mock.
  */
 export class ExecutorRegistry {
   private executors = new Map<string, Executor>();
 
   constructor() {
     this.register(new MockExecutor());
+    this.register(new OpenCodeExecutor());
+    this.register(new CodexExecutor());
+    this.register(new ClaudeExecutor());
   }
 
   register(executor: Executor): void {

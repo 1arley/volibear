@@ -73,7 +73,8 @@ export class App {
       const override = this.config.agents[agent.id];
       map.set(agent.id, {
         ...agent,
-        executor: override?.executor ?? agent.executor,
+        // Per-agent config wins; otherwise the project default executor applies.
+        executor: override?.executor ?? this.config.executor,
         router: override?.router ?? agent.router,
         model: override?.model ?? agent.model,
       });
@@ -82,13 +83,14 @@ export class App {
   }
 
   /**
-   * Resolve executor map from config (mock only for now; real executors register later).
+   * Resolve executor map from config. All registered adapters are available;
+   * agents reference one by id. Missing binaries fail loudly at invocation —
+   * there is no silent fallback to the mock executor.
    */
   getExecutors() {
     const map = new Map<string, import('@volibear/contracts').Executor>();
-    const configuredExecutor = this.config.executor;
-    if (configuredExecutor === 'mock' || !this.executors.has(configuredExecutor)) {
-      map.set('mock', this.executors.get('mock')!);
+    for (const executor of this.executors.list()) {
+      map.set(executor.id, executor);
     }
     return map;
   }
