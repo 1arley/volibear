@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# build output
+packages/*/dist/
+*.tsbuildinfo
+
+# volibear runtime state
+.volibear/.runs/
+.volibear/.runs
+
+# test/coverage
+coverage/
+
+# editor
+.vscode/
+.idea/

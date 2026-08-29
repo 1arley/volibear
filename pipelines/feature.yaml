@@ -1,0 +1,40 @@
+# Default Volibear pipeline: feature
+# Rubberduck → Architect → Developer → [Reviewer → Fixer → Reviewer] loop → Verifier
+
+name: feature
+description: Implement a new feature from a task or external findings
+version: 1
+
+repair:
+  max_cycles: 3
+  reject_on: [critical, high]
+
+stages:
+  - id: rubberduck
+    type: rubberduck
+    description: Interactive discovery — lock requirements before architecture
+
+  - id: architect
+    type: agent
+    agent: architect
+    description: Design the implementation from locked requirements
+
+  - id: implementation
+    type: loop
+    max_cycles: 3
+    gate: no-findings-above-threshold
+    description: Implement, review, and repair until no findings above threshold
+    stages:
+      - id: developer
+        type: agent
+        agent: developer
+        description: Implement the approved architecture
+
+      - id: reviewer
+        type: agent
+        agent: reviewer
+        description: Review the implementation and produce findings
+
+  - id: verifier
+    type: verify
+    description: Run deterministic project checks

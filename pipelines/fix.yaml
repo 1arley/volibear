@@ -1,0 +1,40 @@
+# Default Volibear pipeline: fix
+# Consumes external findings (e.g. ORNN). Rubberduck → Architect → loop → Verifier
+
+name: fix
+description: Fix external findings through a Volibear pipeline
+version: 1
+
+repair:
+  max_cycles: 3
+  reject_on: [critical, high]
+
+stages:
+  - id: rubberduck
+    type: rubberduck
+    description: Interactive discovery — clarify scope of the fixes
+
+  - id: architect
+    type: agent
+    agent: architect
+    description: Design the fix from locked requirements and findings
+
+  - id: implementation
+    type: loop
+    max_cycles: 3
+    gate: no-findings-above-threshold
+    description: Fix, review, and repair until no findings above threshold
+    stages:
+      - id: fixer
+        type: agent
+        agent: fixer
+        description: Apply fixes to resolve the findings
+
+      - id: reviewer
+        type: agent
+        agent: reviewer
+        description: Verify the fixes and produce findings
+
+  - id: verifier
+    type: verify
+    description: Run deterministic project checks

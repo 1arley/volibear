@@ -1,0 +1,20 @@
+{
+  "name": "volibear",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Portable multi-agent engineering pipeline runtime",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint packages/*/src"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
