@@ -1,15 +1,41 @@
 {
-  "name": "volibear",
-  "version": "0.1.1",
-  "private": true,
+  "name": "volibearq",
+  "version": "0.1.2",
   "description": "Portable multi-agent engineering pipeline runtime",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "volibearq": "dist/index.js",
+    "volibear": "dist/index.js"
+  },
+  "files": [
+    "dist/index.js",
+    "resources/pipelines",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1arley/volibear.git"
+  },
+  "keywords": [
+    "coding-agent",
+    "agent-harness",
+    "pipeline",
+    "multi-agent",
+    "cli"
+  ],
   "scripts": {
     "build": "pnpm -r build",
+    "bundle": "node scripts/build-publish.mjs",
+    "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint packages/*/src"
+    "smoke": "node scripts/smoke-test-pack.mjs",
+    "lint": "eslint packages/*/src",
+    "prepublishOnly": "node scripts/build-publish.mjs"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   },

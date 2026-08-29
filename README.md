@@ -19,25 +19,29 @@ Volibear is a deterministic runtime that takes a software task or structured fin
 - [Gates](#gates)
 - [Configuration](#configuration)
 - [Developing](#developing)
+- [Releasing](#releasing)
 
 ## Quick Start
 
 ```bash
 # Install the CLI
-npx volibear install
+npx volibearq@latest install --project
 
 # Start a new feature pipeline
-npx volibear build "add Google authentication"
+npx volibearq@latest build "add Google authentication"
 
 # Fix external findings (e.g. from ORNN)
-npx volibear fix findings.json
+npx volibearq@latest fix findings.json
 
 # Resume an interrupted run
-npx volibear resume
+npx volibearq@latest resume
 
 # Check status
-npx volibear status
+npx volibearq@latest status
 ```
+
+> The npm package is `volibearq`; the installed binaries are `volibearq` and `volibear`.
+> `npx volibear` resolves the package name, not the binary — always use `volibearq` with `npx`.
 
 ## CLI Usage
 
@@ -109,7 +113,7 @@ Key design rules (full list in `docs/architecture-decisions.md`):
 3. **Artifacts are the stage boundary.** Stages exchange structured files, not conversation transcripts.
 4. **Gates decide progression.** Models produce evidence; runtime gates decide whether work advances.
 5. **Executor, router, model, and agent are independent.** Users may mix them freely.
-6. **Simple outside, strict inside.** The CLI is `npx volibear install` / `npx volibear build "..."`.
+6. **Simple outside, strict inside.** The CLI is `npx volibearq install` / `npx volibearq build "..."`.
 7. **Local files are the persistence layer.** No database required.
 
 ## Agents
@@ -262,6 +266,55 @@ pnpm lint
 
 Requires Node.js >= 20 and pnpm >= 9.
 
+### Local commands
+
+```bash
+# Bundle the CLI into a single self-contained dist/index.js
+pnpm bundle
+
+# Pack, install into a throwaway project, and run the CLI through npx
+pnpm smoke
+```
+
+`pnpm bundle` inlines every `@volibear/*` workspace package plus `zod` and
+`js-yaml` into `dist/index.js`, and copies the default pipelines to
+`resources/pipelines/`. Both are gitignored build output — the published
+tarball is generated in CI, never committed.
+
+## Releasing
+
+Publishing runs in GitHub Actions (`.github/workflows/release.yml`) using npm
+**trusted publishing** — no `NPM_TOKEN` secret exists in the repo.
+
+### One-time setup on npmjs.com
+
+Package → **Settings → Trusted Publisher → GitHub Actions**:
+
+| Field | Value |
+| --- | --- |
+| Organization or user | `1arley` |
+| Repository | `volibear` |
+| Workflow filename | `release.yml` |
+| Environment name | *(leave empty unless you uncomment `environment:`)* |
+| Allowed actions | `npm publish` |
+
+Then **Settings → Publishing access → Require two-factor authentication and
+disallow tokens**. npm does not validate this form when you save it — a typo
+only surfaces as `ENEEDAUTH` on the first publish.
+
+### Cutting a release
+
+```bash
+npm version patch -m "%s" && git push --follow-tags
+```
+
+The tag push triggers the workflow. `verify` runs typecheck, unit tests, and
+`pnpm smoke`; `publish` asserts the tag matches `package.json`, that the
+version is not already on the registry, then runs `npm publish --provenance`.
+
+To rehearse without publishing, run **Release → Run workflow → dry run** from
+the Actions tab.
+
 ## License
 
-Private — see `package.json`.
+MIT.

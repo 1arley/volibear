@@ -26,7 +26,10 @@ Options:
   --version                   Show version
 `;
 
-const VERSION = '0.1.0';
+declare const __VOLIBEAR_VERSION__: string | undefined;
+
+const VERSION =
+  typeof __VOLIBEAR_VERSION__ === 'string' ? __VOLIBEAR_VERSION__ : '0.0.0-dev';
 
 export interface CliOptions {
   executor?: string;
