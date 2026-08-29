@@ -629,4 +629,105 @@ describe('RunOrchestrator (mock end-to-end)', () => {
     expect(runStore.load(run.id)?.error).toBe('Architect requires locked requirements');
     expect(artifacts.readRaw('architecture.md')).toBeNull();
   });
+
+  it('review loop runs fixer when reviewer rejects, then approves on second pass', async () => {
+    const rejectFindings = [
+      { id: 'F1', severity: 'high' as const, title: 'Missing error handling' },
+    ];
+    const rejectExecutor = new MockExecutor({ rejectFindings });
+    const execMap = new Map([['mock', rejectExecutor]]);
+    const agentsWithMock = new Map(
+      [...agentsMap.entries()].map(([id, a]) => [id, { ...a, executor: 'mock' }]),
+    );
+
+    const run = runStore.create('run-loop', 'test-pipeline', 'loop task');
+    const pipeline = makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+      {
+        id: 'implementation',
+        type: 'loop',
+        max_cycles: 3,
+        gate: 'no-findings-above-threshold',
+        stages: [
+          { id: 'developer', type: 'agent', agent: 'developer' },
+          { id: 'reviewer', type: 'agent', agent: 'reviewer' },
+        ],
+      },
+      { id: 'verifier', type: 'verify' },
+    ]);
+
+    const orchestrator = new RunOrchestrator({
+      runStore,
+      events,
+      artifacts,
+      cwd: dir,
+      agents: agentsWithMock,
+      executors: execMap,
+      config: {
+        repair: { max_cycles: 3, reject_on: ['critical', 'high'] },
+        verification: { commands: ['echo ok'] },
+      },
+      rubberduck: mockDriver,
+    });
+
+    const result = await orchestrator.run(pipeline, run);
+    expect(result).toBe('PASS');
+
+    // Repair started at least once (reviewer rejected first time)
+    expect(events.filter('repair.started').length).toBeGreaterThanOrEqual(1);
+    const final = runStore.load('run-loop');
+    expect(final?.state).toBe('PASS');
+    expect(final?.completed_stages).toContain('verifier');
+  });
+
+  it('blocks after max repair cycles exhausted', async () => {
+    const alwaysReject = [
+      { id: 'F1', severity: 'high' as const, title: 'Persistent bug' },
+    ];
+    const rejectExecutor = new MockExecutor({
+      rejectFindings: alwaysReject,
+      alwaysReject: true,
+    });
+    const execMap = new Map([['mock', rejectExecutor]]);
+    const agentsWithMock = new Map(
+      [...agentsMap.entries()].map(([id, a]) => [id, { ...a, executor: 'mock' }]),
+    );
+
+    const run = runStore.create('run-exhaust', 'test-pipeline', 'exhaust task');
+    const pipeline = makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+      {
+        id: 'implementation',
+        type: 'loop',
+        max_cycles: 2,
+        gate: 'no-findings-above-threshold',
+        stages: [
+          { id: 'developer', type: 'agent', agent: 'developer' },
+          { id: 'reviewer', type: 'agent', agent: 'reviewer' },
+        ],
+      },
+    ]);
+
+    const orchestrator = new RunOrchestrator({
+      runStore,
+      events,
+      artifacts,
+      cwd: dir,
+      agents: agentsWithMock,
+      executors: execMap,
+      config: {
+        repair: { max_cycles: 2, reject_on: ['high'] },
+        verification: { commands: [] },
+      },
+      rubberduck: mockDriver,
+    });
+
+    const result = await orchestrator.run(pipeline, run);
+    expect(result).toBe('BLOCKED');
+    const final = runStore.load('run-exhaust');
+    expect(final?.state).toBe('BLOCKED');
+    expect(final?.error).toContain('exceeded');
+  });
 });

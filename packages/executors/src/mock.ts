@@ -12,6 +12,9 @@ import {
 /**
  * Mock executor — deterministic stand-in for LLM-backed coding CLIs.
  * Each agent role produces a deterministic artifact. No LLM involved.
+ *
+ * The reviewer can be scripted to reject with findings on early passes and
+ * approve only after the fixer has run, which exercises the repair loop.
  */
 export class MockExecutor implements Executor {
   readonly id = 'mock';
@@ -23,6 +26,18 @@ export class MockExecutor implements Executor {
     custom_endpoint: false,
     structured_output: true,
   };
+
+  constructor(private options?: {
+    /** Reviewer rejects with these findings until the fixer has run. */
+    rejectFindings?: Array<{
+      id: string;
+      severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+      title: string;
+      recommendation?: string;
+    }>;
+    /** Reviewer rejects on every pass, even after the fixer ran. */
+    alwaysReject?: boolean;
+  }) {}
 
   async detect(): Promise<boolean> {
     return true;
@@ -116,16 +131,23 @@ export class MockExecutor implements Executor {
   }
 
   private reviewer(ctx: ExecutorContext): ExecutorResult {
-    // Deterministic: always pass. A real LLM-backed reviewer would differ.
+    const fixerRan = implementationHasFixerMark(ctx.runDir);
+    const rejectOnEveryPass = this.options?.alwaysReject === true;
+    const findings = this.options?.rejectFindings && (!fixerRan || rejectOnEveryPass)
+      ? this.options.rejectFindings
+      : [];
+    const approved = findings.length === 0;
     writeJson(ctx.runDir, 'review.json', {
       version: 1,
-      approved: true,
-      findings: [],
-      summary: 'Mock review: no findings',
+      approved,
+      findings,
+      summary: approved
+        ? 'Mock review: no findings'
+        : `Mock review: ${findings.length} finding(s) before fixer`,
     });
     return {
       exitCode: 0,
-      stdout: '[mock] reviewer approved',
+      stdout: approved ? '[mock] reviewer approved' : '[mock] reviewer rejected',
       stderr: '',
     };
   }
@@ -136,6 +158,7 @@ export class MockExecutor implements Executor {
       files_changed: [],
       files_deleted: [],
       summary: 'Mock fixer applied',
+      _fixer_mark: true,
     });
     return {
       exitCode: 0,
@@ -252,6 +275,15 @@ function readRequirements(runDir: string): Requirements | null {
     return JSON.parse(raw);
   } catch {
     return null;
+  }
+}
+
+function implementationHasFixerMark(runDir: string): boolean {
+  try {
+    const raw = readFileSync(join(runDir, 'implementation.json'), 'utf-8');
+    return JSON.parse(raw)._fixer_mark === true;
+  } catch {
+    return false;
   }
 }
 
