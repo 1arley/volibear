@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 export const AgentConfigSchema = z.object({
   executor: z.string().default('mock'),
-  router: z.string().default('native'),
+  router: z.enum(['native', '9router']).optional(),
   model: z.string().optional(),
 });
 
@@ -57,6 +57,8 @@ export const ProjectConfigSchema = z.object({
   verification: VerificationConfigSchema.default({}),
   repair: RepairConfigSchema.default({ max_cycles: 3, reject_on: ['critical', 'high'] }),
   executors: z.array(ExecutorConfigSchema).default([]),
+  /** Hard timeout (ms) for executor invocations and command/verify stages. */
+  executor_timeout_ms: z.number().int().positive().default(600_000),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;

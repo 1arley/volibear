@@ -1,8 +1,10 @@
 import { resolve, dirname, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   loadConfig,
   resolveProjectDir,
+  resolveGlobalDir,
   ensureConfigDirs,
   EventLog,
   ArtifactStore,
@@ -16,7 +18,7 @@ import {
   RubberduckInteraction,
 } from '@volibear/contracts';
 import { PipelineParser, validatePipelineAgents, RunOrchestrator } from '@volibear/runtime';
-import { ExecutorRegistry, MockExecutor, MockRubberduckDriver } from '@volibear/executors';
+import { ExecutorRegistry, MockRubberduckDriver } from '@volibear/executors';
 import { CliOptions } from './cli.js';
 
 /**
@@ -28,6 +30,13 @@ export function bundledPipelinesDir(): string {
   // dist/app.js (or src/app.ts under vitest) — the package root is one level up
   const packageDir = dirname(dirname(currentFile));
   return join(packageDir, 'resources', 'pipelines');
+}
+
+/** Resolve the CLI's bundled agent instructions directory (resources/agents). */
+export function bundledAgentsDir(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  const packageDir = dirname(dirname(currentFile));
+  return join(packageDir, 'resources', 'agents');
 }
 
 /**
@@ -42,44 +51,110 @@ export class App {
   readonly runStore: RunStore;
   readonly executors: ExecutorRegistry;
   readonly parser: PipelineParser;
+  /** CLI flags must beat per-agent config entries (plan § 20 precedence). */
+  private readonly cliExecutor?: string;
+  private readonly cliRouter?: string;
+  configSource: 'project' | 'global' | 'defaults' = 'defaults';
 
-  private constructor(cwd: string, config: ProjectConfig, runsDir: string) {
+  private constructor(
+    cwd: string,
+    config: ProjectConfig,
+    runsDir: string,
+    cliExecutor?: string,
+    cliRouter?: string,
+  ) {
     this.cwd = cwd;
     this.projectDir = resolveProjectDir(cwd);
     this.runsDir = runsDir;
     this.config = config;
     this.runStore = new RunStore(runsDir);
-    this.executors = new ExecutorRegistry();
+    this.executors = new ExecutorRegistry(config.executor_timeout_ms);
     this.parser = new PipelineParser();
+    this.cliExecutor = cliExecutor;
+    this.cliRouter = cliRouter;
   }
 
-  static async create(cwd = process.cwd(), options: CliOptions = {}): Promise<App> {
+  static async create(
+    cwd = process.cwd(),
+    options: CliOptions = {},
+  ): Promise<App & { configSource: 'project' | 'global' | 'defaults' }> {
     const { projectDir } = ensureConfigDirs(cwd);
     const overrides: Partial<ProjectConfig> = {};
     if (options.executor) overrides.executor = options.executor;
     if (options.pipeline) overrides.pipeline = options.pipeline;
-    if (options.router) overrides.router = { mode: '9router' };
+    if (options.router) {
+      if (options.router !== 'native' && options.router !== '9router') {
+        throw new Error(`unknown router "${options.router}" (available: native, 9router)`);
+      }
+      overrides.router = { mode: options.router };
+    }
     const config = await loadConfig({ projectDir, overrides });
     const runsDir = resolve(projectDir, '.runs');
-    return new App(cwd, config, runsDir);
+    const app = new App(cwd, config, runsDir, options.executor, options.router);
+    app.configSource = existsSync(resolve(projectDir, 'config.yaml'))
+      ? 'project'
+      : existsSync(join(resolveGlobalDir(), 'config.yaml'))
+        ? 'global'
+        : 'defaults';
+    return app;
   }
 
   /**
-   * Resolve agent definitions, merging config overrides onto built-ins.
+   * Resolve agent definitions, merging config overrides onto built-ins and
+   * loading role instructions (project > global > bundled).
    */
   getAgents(): Map<string, AgentDefinition> {
     const map = new Map<string, AgentDefinition>();
     for (const agent of BUILTIN_AGENTS) {
       const override = this.config.agents[agent.id];
+      // Precedence: CLI flag > per-agent config > global default.
+      const executor = this.cliExecutor ?? override?.executor ?? this.config.executor;
+      const routerMode = this.cliRouter ?? override?.router ?? this.config.router.mode;
       map.set(agent.id, {
         ...agent,
-        // Per-agent config wins; otherwise the project default executor applies.
-        executor: override?.executor ?? this.config.executor,
-        router: override?.router ?? agent.router,
+        executor,
+        router: routerMode ?? agent.router,
         model: override?.model ?? agent.model,
+        instructions: this.loadAgentInstructions(agent.id),
       });
     }
     return map;
+  }
+
+  /**
+   * Load agent instruction text from the first existing location:
+   * .volibear/agents/<id>.md, ~/.volibear/agents/<id>.md, bundled agents/.
+   */
+  loadAgentInstructions(agentId: string): string | undefined {
+    const candidates = [
+      resolve(this.projectDir, 'agents', `${agentId}.md`),
+      resolve(resolveGlobalDir(), 'agents', `${agentId}.md`),
+      resolve(bundledAgentsDir(), `${agentId}.md`),
+    ];
+    for (const file of candidates) {
+      if (existsSync(file)) {
+        try {
+          return readFileSync(file, 'utf-8');
+        } catch {
+          return undefined;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** Fail fast when any agent references an executor that is not registered. */
+  validateExecutors(): void {
+    const available = this.executors.list().map((e) => e.id).sort();
+    const problems: string[] = [];
+    for (const agent of this.getAgents().values()) {
+      if (!this.executors.has(agent.executor)) {
+        problems.push(`agent "${agent.id}" uses unknown executor "${agent.executor}" (available: ${available.join(', ')})`);
+      }
+    }
+    if (problems.length > 0) {
+      throw new Error(`executor configuration error:\n  ${problems.join('\n  ')}`);
+    }
   }
 
   /**
