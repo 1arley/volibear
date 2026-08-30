@@ -49,14 +49,13 @@ npx volibearq@latest status
 Usage: volibear <command> [options]
 
 Commands:
-  install                     Install Volibear integrations (project or global)
+  install                     Install Volibear integrations
   build <task>                Start a development pipeline
   fix [findings]              Fix findings through a Volibear pipeline
-  resume                      Resume the latest interrupted pipeline
+  resume                      Resume the latest resumable pipeline
   status                      Show current pipeline status
-  review                      Review the current working tree
-  update                      Update Volibear agents and integrations
-  config                      Manage configuration
+  update                      Refresh bundled pipelines and agent instructions
+  config                      Show the resolved configuration
   help                        Show available commands and pipelines
 
 Options:
@@ -64,6 +63,7 @@ Options:
   --router <name>             Select routing layer (native, 9router)
   --pipeline <name>           Select pipeline
   --accept-defaults           Delegate blocking decisions automatically (non-interactive)
+  --force                     Overwrite config (install) / retry a BLOCKED run (resume)
   --project                   Install into the current project
   --global                    Install into ~/.volibear/
   --help, -h                  Show help
@@ -145,9 +145,13 @@ Executor adapters translate agent invocations to coding CLIs. Each declares capa
 All CLI executors inherit from `CliExecutor` (`packages/executors/src/base.ts`), which provides:
 
 - Binary detection via PATH
-- Async `spawn` with a 20-second timeout (prevents interactive CLIs from blocking the runtime)
+- Async `spawn` with a configurable hard timeout (`executor_timeout_ms`, default 10 minutes)
 - Refusal to run a non-headless executor
 - Structured JSON extraction from mixed stdout
+- Agent role instructions injected into the prompt (from `.volibear/agents/`, `~/.volibear/agents/`, or the bundled copies)
+
+> **Note:** agent `permissions` are advisory metadata today (passed to the executor
+> context and prompt); the runtime does not yet sandbox a real CLI's file/shell access.
 
 Executors can be added without modifying the pipeline core — register a new class on the `ExecutorRegistry`.
 
@@ -224,7 +228,12 @@ agents:
     executor: mock
   developer:
     executor: mock
+# executor_timeout_ms: 600000   # hard timeout for executors and verify commands
 ```
+
+> `install` writes `verification.commands: []` with a comment — a run with no
+> verification commands still reports PASS, and the CLI prints a warning. Add
+> your project's checks to make PASS meaningful.
 
 ## Run Lifecycle
 
@@ -264,9 +273,7 @@ pnpm test:watch
 pnpm lint
 ```
 
-Requires Node.js >= 20 and pnpm >= 9.
-
-### Local commands
+Requires Node.js >= 20 and pnpm >= 9.### Local commands
 
 ```bash
 # Bundle the CLI into a single self-contained dist/index.js
