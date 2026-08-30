@@ -11,6 +11,7 @@
   "files": [
     "dist/index.js",
     "resources/pipelines",
+    "resources/agents",
     "README.md"
   ],
   "repository": {
@@ -36,7 +37,9 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
+    "eslint": "^9",
     "typescript": "^5.5.0",
+    "typescript-eslint": "^8",
     "vitest": "^2.0.0"
   },
   "engines": {
