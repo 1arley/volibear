@@ -77,6 +77,7 @@ check('files allowlist ships the bundle and the resources', () => {
   const files = manifest.files ?? [];
   assert(files.includes('dist/index.js'), 'files must include dist/index.js');
   assert(files.includes('resources/pipelines'), 'files must include resources/pipelines');
+  assert(files.includes('resources/agents'), 'files must include resources/agents');
 });
 check('no workspace protocol leaks into the published manifest', () => {
   const deps = { ...manifest.dependencies, ...manifest.optionalDependencies };
@@ -112,6 +113,12 @@ check('tarball contains bundled pipeline resources', () => {
       `resources/pipelines/${name}.yaml missing — install would copy nothing`,
     );
   }
+});
+check('tarball contains bundled agent instructions', () => {
+  assert(
+    entries.includes('resources/agents/rubberduck.md'),
+    'resources/agents/rubberduck.md missing — agent prompts would run without role instructions',
+  );
 });
 check('tarball excludes workspace sources and node_modules', () => {
   const leaked = entries.filter((e) => e.startsWith('packages/') || e.startsWith('node_modules/'));
