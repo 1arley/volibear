@@ -77,22 +77,29 @@ export class NoFindingsAboveThresholdGate implements Gate {
   readonly id = 'no-findings-above-threshold';
   readonly description = 'Review must have no findings above the threshold';
 
-  evaluate(params: GateParams): GateResult {
-    const review = params.review;
-    if (!review) {
-      return { passed: false, gate: this.id, reason: 'review artifact missing' };
-    }
-    const rejectOn = params.rejectOn ?? ['critical', 'high'];
-    const severityRank: Record<string, number> = {
+  /** Lower rank = less severe. Unknown severities rank as critical (fail closed). */
+  private rank(severity: string): number {
+    const normalized = severity.toLowerCase().trim();
+    const ranks: Record<string, number> = {
       info: 0,
       low: 1,
       medium: 2,
       high: 3,
       critical: 4,
     };
-    const rejected = review.findings.filter((f) =>
-      rejectOn.includes(f.severity),
-    );
+    return ranks[normalized] ?? 4;
+  }
+
+  evaluate(params: GateParams): GateResult {
+    const review = params.review;
+    if (!review) {
+      return { passed: false, gate: this.id, reason: 'review artifact missing' };
+    }
+    const rejectOn = params.rejectOn ?? ['critical', 'high'];
+    // The threshold is the least severe configured rejection level; any
+    // finding at or above it rejects. Unknown severities rank as critical.
+    const threshold = Math.min(...rejectOn.map((s) => this.rank(s)));
+    const rejected = review.findings.filter((f) => this.rank(f.severity) >= threshold);
     if (rejected.length > 0) {
       return {
         passed: false,

@@ -7,7 +7,7 @@ import {
   RubberduckInteraction,
   Stage,
 } from '@volibear/contracts';
-import { EventLog, ArtifactStore } from '@volibear/core';
+import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
 import { GateRegistry, GateParams } from './gates.js';
 import { runRubberduck, RubberduckDriver } from './rubberduck.js';
 
@@ -15,11 +15,13 @@ export interface RuntimeServices {
   events: EventLog;
   artifacts: ArtifactStore;
   gates: GateRegistry;
+  runStore: RunStore;
   cwd: string;
   runDir: string;
   config: {
     repair: { max_cycles: number; reject_on: string[] };
     verification: { commands: string[] };
+    executor_timeout_ms?: number;
   };
 }
 
@@ -54,7 +56,7 @@ export async function runStage(
   stage: Stage,
   ctx: StageRunContext,
 ): Promise<StageOutcome> {
-  const { events, artifacts } = ctx.services;
+  const { events } = ctx.services;
 
   switch (stage.type) {
     case 'agent': {
@@ -85,7 +87,11 @@ export async function runStage(
       const result = await runCommandStage(stage.command!, ctx);
       events.record('stage.completed', ctx.runId, { stage: stage.id, exitCode: result.exitCode });
       if (result.exitCode !== 0) {
-        return { kind: 'fail', error: `command "${stage.command}" exited with ${result.exitCode}` };
+        const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim();
+        return {
+          kind: 'fail',
+          error: `command "${stage.command}" ${result.timedOut ? 'timed out' : `exited with ${result.exitCode}`}${detail ? `\n${truncate(detail, 1200)}` : ''}`,
+        };
       }
       return { kind: 'continue' };
     }
@@ -133,7 +139,7 @@ async function runAgentStage(
     executor: agent.executor,
   });
 
-  const ec: ExecutorContext = {
+     const ec: ExecutorContext = {
     cwd: ctx.services.cwd,
     runDir: ctx.services.runDir,
     task: ctx.task,
@@ -141,6 +147,7 @@ async function runAgentStage(
     model: agent.model,
     router: agent.router,
     permissions: stage.permissions ?? agent.permissions,
+    instructions: agent.instructions,
     findingsFile: ctx.findingsFile,
     context: buildFindingsContext(ctx.findings),
   };
@@ -168,7 +175,8 @@ async function runAgentStage(
 function runCommandStage(
   command: string,
   ctx: StageRunContext,
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }> {
+  const timeoutMs = ctx.services.config.executor_timeout_ms ?? 600_000;
   return new Promise((resolve, reject) => {
     const child = spawn(command, {
       cwd: ctx.services.cwd,
@@ -177,10 +185,24 @@ function runCommandStage(
     });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
     child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ exitCode: code ?? 1, stdout, stderr }));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        stderr += `\n[volibear] command killed after ${timeoutMs}ms timeout`;
+      }
+      resolve({ exitCode: code ?? 1, stdout, stderr, timedOut });
+    });
   });
 }
 
@@ -192,29 +214,59 @@ async function runVerifyStage(ctx: StageRunContext): Promise<StageOutcome> {
   const results = [];
   let allPassed = true;
 
+  if (commands.length === 0) {
+    events.record('verification.completed', ctx.runId, { status: 'pass', warning: 'no verification commands configured' });
+  }
+
+  const failedCommands: string[] = [];
   for (const cmd of commands) {
     const started = Date.now();
     const r = await runCommandStage(cmd, ctx);
     const duration = Date.now() - started;
     const passed = r.exitCode === 0;
     allPassed = allPassed && passed;
-    results.push({ command: cmd, passed, exit_code: r.exitCode, duration_ms: duration });
+    if (!passed) failedCommands.push(cmd);
+    results.push({
+      command: cmd,
+      passed,
+      exit_code: r.exitCode,
+      duration_ms: duration,
+      stdout: truncate(r.stdout),
+      stderr: truncate(r.stderr),
+    });
     events.record('verification.command.executed', ctx.runId, {
       command: cmd,
       passed,
       exit_code: r.exitCode,
+      duration_ms: duration,
     });
   }
 
   const verification = {
     commands: results,
     passed: allPassed,
-    summary: allPassed ? 'all verification commands passed' : 'verification failed',
+    summary: allPassed
+      ? commands.length === 0
+        ? 'no verification commands configured — run passed without project checks'
+        : 'all verification commands passed'
+      : `verification failed: ${failedCommands.join(', ')}`,
   };
   artifacts.write('verification', verification);
   events.record('verification.completed', ctx.runId, { status: allPassed ? 'pass' : 'fail' });
 
-  return allPassed ? { kind: 'continue' } : { kind: 'fail', error: 'verification failed' };
+  if (!allPassed) {
+    const first = results.find((r) => !r.passed)!;
+    const detail = [first.stdout, first.stderr].filter(Boolean).join('\n').trim();
+    return {
+      kind: 'fail',
+      error: `verification failed: ${failedCommands.join(', ')}${detail ? `\n${truncate(detail, 1200)}` : ''}`,
+    };
+  }
+  return { kind: 'continue' };
+}
+
+function truncate(text: string, max = 2000): string {
+  return text.length > max ? `${text.slice(0, max)}\n… (truncated)` : text;
 }
 
 // ── Rubberduck stage ───────────────────────────────────
@@ -244,8 +296,19 @@ async function runLoopStage(
     return { kind: 'fail', error: `loop gate "${stage.gate}" not found` };
   }
 
-  for (let cycle = 1; cycle <= maxCycles; cycle++) {
-    events.record('repair.started', ctx.runId, { cycle });
+  // The repair budget is per RUN, not per invocation: ctx.repairCycle carries
+  // the cycles already consumed (restored from run.json on resume), so an
+  // interrupted-and-resumed loop can never exceed max_cycles in total.
+  const startCycle = ctx.repairCycle + 1;
+  if (startCycle > maxCycles) {
+    return {
+      kind: 'loop-exhausted',
+      reason: `${stage.id} already consumed ${ctx.repairCycle} of ${maxCycles} repair cycles; human intervention required`,
+    };
+  }
+
+  for (let cycle = startCycle; cycle <= maxCycles; cycle++) {
+    events.record('repair.started', ctx.runId, { cycle, max_cycles: maxCycles });
     ctx.repairCycle = cycle;
 
     // Run inner stages; on the first pass the developer agent runs, on
@@ -281,6 +344,14 @@ async function runLoopStage(
       ctx.runId,
       { gate: stage.gate, reason: gateResult.reason },
     );
+    events.record(
+      gateResult.passed ? 'review.approved' : 'review.rejected',
+      ctx.runId,
+      { cycle, reason: gateResult.reason },
+    );
+    // Persist the consumed cycle immediately so an interrupted run can never
+    // recover a fresh repair budget on resume.
+    ctx.services.runStore.update(ctx.runId, { repair_cycle: cycle });
     if (gateResult.passed) {
       return { kind: 'continue' };
     }
@@ -313,6 +384,14 @@ function buildGateParams(gateId: string, ctx: StageRunContext): GateParams {
   const req = ctx.getRequirements();
   const review = ctx.getReview();
   const verification = ctx.getVerification();
+  // Existence map so the artifacts-exist gate can be used declaratively.
+  const artifactNames: Array<'requirements' | 'architecture' | 'implementation' | 'review' | 'verification' | 'findings'> = [
+    'requirements', 'architecture', 'implementation', 'review', 'verification', 'findings',
+  ];
+  const extra: Record<string, unknown> = {};
+  for (const name of artifactNames) {
+    extra[name] = ctx.services.artifacts.exists(name);
+  }
   return {
     requirements: req as never,
     review: review as never,
@@ -321,5 +400,6 @@ function buildGateParams(gateId: string, ctx: StageRunContext): GateParams {
     maxRepairCycles: repair.max_cycles,
     rejectOn: repair.reject_on,
     requirementsLocked: ctx.services.artifacts.readRaw('requirements.lock') !== null,
+    extra,
   };
 }

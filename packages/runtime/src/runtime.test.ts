@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BlockingQuestionsResolvedGate,
   NoFindingsAboveThresholdGate,
   RepairCyclesWithinLimitGate,
-  GateRegistry,
 } from './gates.js';
 import { RubberduckSession } from './rubberduck.js';
 import { MockExecutor, MockRubberduckDriver } from '@volibear/executors';
@@ -14,10 +13,8 @@ import {
   AgentDefinition,
   BUILTIN_AGENTS,
   PipelineSchema,
-  Requirements,
   RubberduckAnswer,
   RubberduckInteraction,
-  RubberduckQuestion,
   RubberduckSnapshot,
 } from '@volibear/contracts';
 import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
@@ -342,7 +339,7 @@ describe('MockExecutor', () => {
     expect(readFileSync(join(runDir, 'architecture.json'), 'utf-8')).toContain('build X');
   });
 
-  it('developer creates implementation.txt in project cwd', async () => {
+  it('developer writes implementation into the run directory, not the project cwd', async () => {
     const runDir = join(dir, 'run');
     mkdirSync(runDir, { recursive: true });
     const r = await exec.runAgent({
@@ -352,7 +349,8 @@ describe('MockExecutor', () => {
       agent: 'developer',
     });
     expect(r.exitCode).toBe(0);
-    expect(readFileSync(join(dir, 'src', 'implementation.txt'), 'utf-8')).toContain(
+    expect(existsSync(join(dir, 'src'))).toBe(false);
+    expect(readFileSync(join(runDir, 'implementation.txt'), 'utf-8')).toContain(
       'Mock implementation',
     );
   });
@@ -778,5 +776,63 @@ describe('RunOrchestrator (mock end-to-end)', () => {
     const final = runStore.load('run-exhaust');
     expect(final?.state).toBe('BLOCKED');
     expect(final?.error).toContain('exceeded');
+  });
+
+  // ── Regression tests (post-audit fixes) ───────────────
+
+  it('REGRESSION: severity gate rejects unknown and case-variant severities (fail closed)', () => {
+    const gate = new NoFindingsAboveThresholdGate();
+    for (const severity of ['blocker', 'HIGH', 'Critical', 'sev1']) {
+      const r = gate.evaluate({
+        review: {
+          version: 1,
+          approved: false,
+          findings: [{ id: 'F1', severity: severity as never, title: 'X' }],
+        },
+        rejectOn: ['critical', 'high'],
+      });
+      expect(r.passed, `severity "${severity}" must not bypass the gate`).toBe(false);
+    }
+  });
+
+  it('REGRESSION: repair budget persists across resumes (max_cycles is per run)', async () => {
+    const run = runStore.create('run-budget', 'test-pipeline', 'budget task');
+    runStore.update(run.id, {
+      state: 'IMPLEMENTATION',
+      completed_stages: ['rubberduck', 'architect'],
+      repair_cycle: 3,
+    });
+    const persisted = runStore.load(run.id)!;
+
+    const pipeline = makePipeline([
+      {
+        id: 'implementation',
+        type: 'loop',
+        max_cycles: 3,
+        gate: 'no-findings-above-threshold',
+        stages: [
+          { id: 'developer', type: 'agent', agent: 'developer' },
+          { id: 'reviewer', type: 'agent', agent: 'reviewer' },
+        ],
+      },
+    ]);
+    const orchestrator = new RunOrchestrator({
+      runStore,
+      events,
+      artifacts,
+      cwd: dir,
+      agents: agentsMap,
+      executors: executorsMap,
+      config: {
+        repair: { max_cycles: 3, reject_on: ['critical', 'high'] },
+        verification: { commands: [] },
+      },
+      rubberduck: mockDriver,
+    });
+
+    // Budget already consumed: resume must NOT grant fresh cycles.
+    const result = await orchestrator.run(pipeline, persisted);
+    expect(result).toBe('BLOCKED');
+    expect(events.filter('repair.started')).toHaveLength(0);
   });
 });

@@ -8,7 +8,7 @@ import {
 } from '@volibear/contracts';
 import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
 import { GateRegistry } from './gates.js';
-import { runStage, RuntimeServices, StageOutcome } from './stage-runner.js';
+import { runStage, RuntimeServices } from './stage-runner.js';
 
 export interface OrchestratorOptions {
   runStore: RunStore;
@@ -58,6 +58,7 @@ export class RunOrchestrator {
       events: opts.events,
       artifacts: opts.artifacts,
       gates: this.gates,
+      runStore: opts.runStore,
       cwd: opts.cwd,
       runDir: opts.artifacts.dir,
       config: opts.config,
@@ -69,7 +70,10 @@ export class RunOrchestrator {
    */
   async run(pipeline: Pipeline, run: Run): Promise<RunState> {
     const { events, runStore } = this.opts;
-    events.record('run.started', run.id, { pipeline: pipeline.name, task: run.task });
+    // Lifecycle event only once per run — resume must not re-record it.
+    if (run.state === 'CREATED') {
+      events.record('run.started', run.id, { pipeline: pipeline.name, task: run.task });
+    }
 
     const ctx = {
       runId: run.id,
@@ -131,6 +135,7 @@ export class RunOrchestrator {
             state: 'WAITING_FOR_USER',
             current_stage: stage.id,
             error: outcome.reason,
+            repair_cycle: ctx.repairCycle,
           });
           return 'WAITING_FOR_USER';
         }
@@ -146,6 +151,7 @@ export class RunOrchestrator {
           run = runStore.update(run.id, {
             state: terminal,
             error: outcome.reason,
+            repair_cycle: ctx.repairCycle,
           }) ?? run;
           return terminal;
         }

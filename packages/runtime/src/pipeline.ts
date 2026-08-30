@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Pipeline, PipelineSchema, Stage, AgentDefinition } from '@volibear/contracts';
+import { formatZodIssues } from '@volibear/core';
 
 /**
  * Pipeline parser — loads pipeline definitions from YAML/JSON.
@@ -34,12 +35,24 @@ export class PipelineParser {
     const content = readFileSync(filePath, 'utf-8');
     let raw: unknown;
     if (filePath.endsWith('.json')) {
-      raw = JSON.parse(content);
+      try {
+        raw = JSON.parse(content);
+      } catch (err) {
+        throw new Error(`invalid pipeline ${filePath}: not valid JSON — ${err instanceof Error ? err.message : err}`);
+      }
     } else {
       const { load } = await import('js-yaml');
-      raw = load(content);
+      try {
+        raw = load(content);
+      } catch (err) {
+        throw new Error(`invalid pipeline ${filePath}: ${err instanceof Error ? err.message : err}`);
+      }
     }
-    return PipelineSchema.parse(raw);
+    try {
+      return PipelineSchema.parse(raw);
+    } catch (err) {
+      throw new Error(`invalid pipeline ${filePath}: ${formatZodIssues(err)}`);
+    }
   }
 }
 
