@@ -19,6 +19,10 @@ export class ClaudeExecutor extends CliExecutor {
   };
   protected binary = 'claude';
 
+  constructor(timeoutMs = 600_000) {
+    super(timeoutMs);
+  }
+
   protected env(ctx: ExecutorContext): Record<string, string | undefined> {
     const env: Record<string, string | undefined> = {
       VOLIBEAR_AGENT: ctx.agent,
@@ -29,7 +33,7 @@ export class ClaudeExecutor extends CliExecutor {
     return env;
   }
 
-  protected buildArgs(ctx: ExecutorContext): string[] {
+  protected buildArgs(_ctx: ExecutorContext): string[] {
     return ['-p'];
   }
 }

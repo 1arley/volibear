@@ -5,8 +5,9 @@ import { ExecutorContext } from '@volibear/contracts';
  * OpenCode executor adapter.
  *
  * Declares capabilities (headless, interactive, filesystem, tools) and maps
- * the agent invocation to `opencode run`. The router/model configuration is
- * passed through environment variables so OpenCode can resolve the model.
+ * the agent invocation to `opencode run --model <provider/model>`. The
+ * router provider (e.g. 9Router) is registered in the OpenCode config
+ * (opencode.json), not via an environment variable.
  */
 export class OpenCodeExecutor extends CliExecutor {
   readonly id = 'opencode';
@@ -20,17 +21,20 @@ export class OpenCodeExecutor extends CliExecutor {
   };
   protected binary = 'opencode';
 
+  constructor(timeoutMs = 600_000) {
+    super(timeoutMs);
+  }
+
   protected env(ctx: ExecutorContext): Record<string, string | undefined> {
-    const env: Record<string, string | undefined> = {
+    return {
       VOLIBEAR_AGENT: ctx.agent,
       VOLIBEAR_TASK: ctx.task,
     };
-    if (ctx.model) env.OPENCODE_MODEL = ctx.model;
-    if (ctx.router === '9router') env.OPENCODE_ROUTER = '9router';
-    return env;
   }
 
   protected buildArgs(ctx: ExecutorContext): string[] {
-    return ['run'];
+    const args = ['run'];
+    if (ctx.model) args.push('--model', ctx.model);
+    return args;
   }
 }

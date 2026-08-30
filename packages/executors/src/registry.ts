@@ -11,11 +11,11 @@ import { ClaudeExecutor } from './claude.js';
 export class ExecutorRegistry {
   private executors = new Map<string, Executor>();
 
-  constructor() {
+  constructor(timeoutMs = 600_000) {
     this.register(new MockExecutor());
-    this.register(new OpenCodeExecutor());
-    this.register(new CodexExecutor());
-    this.register(new ClaudeExecutor());
+    this.register(new OpenCodeExecutor(timeoutMs));
+    this.register(new CodexExecutor(timeoutMs));
+    this.register(new ClaudeExecutor(timeoutMs));
   }
 
   register(executor: Executor): void {

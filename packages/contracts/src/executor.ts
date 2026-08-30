@@ -37,6 +37,8 @@ export interface ExecutorContext {
   };
   /** Repository context passed as evidence (file list, diffs) */
   context?: string;
+  /** Agent instruction text (role playbook) to include in the prompt */
+  instructions?: string;
   /** Path to external findings, if any */
   findingsFile?: string;
   /** Callback for streaming output */

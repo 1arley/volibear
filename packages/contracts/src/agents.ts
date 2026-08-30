@@ -26,6 +26,8 @@ export const AgentDefinitionSchema = z.object({
   router: z.string().default('native'),
   model: z.string().optional(),
   instructions_path: z.string().optional(),
+  /** Loaded instruction text (role playbook) handed to the executor prompt. */
+  instructions: z.string().optional(),
 });
 
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;

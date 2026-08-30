@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   Executor,
@@ -113,19 +113,19 @@ export class MockExecutor implements Executor {
   }
 
   private developer(ctx: ExecutorContext): ExecutorResult {
-    // Create the implementation file in the project cwd.
-    const file = join(ctx.cwd, 'src', 'implementation.txt');
-    mkdirSync(join(ctx.cwd, 'src'), { recursive: true });
-    writeFile(file, 'Mock implementation produced by volibear.\n');
+    // Write the mock implementation into the RUN directory (sandbox), never
+    // into the user's project working tree.
+    const file = join(ctx.runDir, 'implementation.txt');
+    writeRaw(ctx.runDir, 'implementation.txt', 'Mock implementation produced by volibear.\n');
     writeJson(ctx.runDir, 'implementation.json', {
-      files_created: ['src/implementation.txt'],
+      files_created: ['implementation.txt'],
       files_changed: [],
       files_deleted: [],
       summary: 'Mock implementation',
     });
     return {
       exitCode: 0,
-      stdout: '[mock] developer wrote src/implementation.txt',
+      stdout: `[mock] developer wrote ${file}`,
       stderr: '',
     };
   }
@@ -154,7 +154,7 @@ export class MockExecutor implements Executor {
 
   private fixer(ctx: ExecutorContext): ExecutorResult {
     writeJson(ctx.runDir, 'implementation.json', {
-      files_created: ['src/implementation.txt'],
+      files_created: ['implementation.txt'],
       files_changed: [],
       files_deleted: [],
       summary: 'Mock fixer applied',
@@ -198,7 +198,7 @@ export class MockRubberduckDriver implements RubberduckDriver {
 
   async discover(
     task: string,
-    context: { findings?: unknown } = {},
+    _context: { findings?: unknown } = {},
   ): Promise<RubberduckQuestion[]> {
     const questions: RubberduckQuestion[] = [];
     const blocking = this.options?.blockingQuestions ?? [
@@ -293,8 +293,4 @@ function writeJson(runDir: string, filename: string, data: unknown): void {
 
 function writeRaw(runDir: string, filename: string, content: string): void {
   writeFileSync(join(runDir, filename), content, 'utf-8');
-}
-
-function writeFile(file: string, content: string): void {
-  writeFileSync(file, content, 'utf-8');
 }

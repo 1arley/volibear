@@ -1,6 +1,4 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   Executor,
   ExecutorCapabilities,
@@ -25,13 +23,15 @@ export function buildAgentPrompt(ctx: ExecutorContext): string {
     '',
     `Task: ${ctx.task}`,
   ];
+  if (ctx.instructions) {
+    lines.push('', '# Agent instructions', '', ctx.instructions);
+  }
   if (ctx.findingsFile) {
     lines.push('', `External findings: ${ctx.findingsFile}`);
   }
   if (ctx.context) {
     lines.push('', 'Repository context:', ctx.context);
   }
-  lines.push('', 'Follow the Volibear agent instructions for output format.');
   return lines.join('\n');
 }
 
@@ -46,6 +46,12 @@ export abstract class CliExecutor implements Executor {
   protected abstract binary: string;
   /** Env vars to set on the child process. */
   protected abstract env(ctx: ExecutorContext): Record<string, string | undefined>;
+  /** Hard timeout for an agent invocation (ms). */
+  protected readonly timeoutMs: number;
+
+  constructor(timeoutMs = 600_000) {
+    this.timeoutMs = timeoutMs;
+  }
 
   async detect(): Promise<boolean> {
     return commandExists(this.binary);
@@ -89,7 +95,7 @@ export abstract class CliExecutor implements Executor {
       const timer = setTimeout(() => {
         killed = true;
         child.kill('SIGKILL');
-      }, 20_000);
+      }, this.timeoutMs);
 
       child.on('error', (err) => {
         clearTimeout(timer);
@@ -106,7 +112,7 @@ export abstract class CliExecutor implements Executor {
           resolve({
             exitCode: 1,
             stdout,
-            stderr: `executor "${this.id}" was killed after 20s timeout — likely an interactive CLI with no headless support`,
+            stderr: `executor "${this.id}" was killed after ${this.timeoutMs / 1000}s timeout`,
           });
         } else {
           resolve({
@@ -153,17 +159,4 @@ export function extractJsonFromOutput(output: string): Record<string, unknown> |
     }
   }
   return undefined;
-}
-
-/** Ensure the run directory exists. */
-export function ensureRunDir(runDir: string): void {
-  const { mkdirSync } = require('node:fs');
-  mkdirSync(runDir, { recursive: true });
-  void existsSync(runDir);
-}
-
-/** Write a JSON artifact into the run directory. */
-export function writeArtifact(runDir: string, name: string, data: unknown): void {
-  const { writeFileSync } = require('node:fs');
-  writeFileSync(join(runDir, name), JSON.stringify(data, null, 2), 'utf-8');
 }
