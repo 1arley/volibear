@@ -39,3 +39,17 @@ export class PipelineError extends VolibearError {
     this.name = 'PipelineError';
   }
 }
+
+/**
+ * Format a Zod error as one short human-readable line per issue, instead of
+ * dumping raw JSON at the user.
+ */
+export function formatZodIssues(err: unknown): string {
+  if (err && typeof err === 'object' && 'issues' in err) {
+    const issues = (err as { issues: Array<{ path: (string | number)[]; message: string }> }).issues;
+    return issues
+      .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+      .join('; ');
+  }
+  return err instanceof Error ? err.message : String(err);
+}

@@ -32,6 +32,8 @@ export const RunSchema = z.object({
   current_stage: z.string().optional(),
   completed_stages: z.array(z.string()).default([]),
   repair_cycle: z.number().int().nonnegative().default(0),
+  /** Monotonic creation sequence within the project; orders same-ms runs. */
+  seq: z.number().int().nonnegative().optional(),
   error: z.string().optional(),
 });
 

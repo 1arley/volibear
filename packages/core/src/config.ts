@@ -2,6 +2,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { ProjectConfig, ProjectConfigSchema } from '@volibear/contracts';
+import { formatZodIssues } from './errors.js';
 
 export interface ConfigOptions {
   projectDir?: string;
@@ -24,18 +25,35 @@ export function resolveGlobalDir(): string {
 }
 
 /**
- * Load YAML/JSON config file, return parsed object or null.
+ * Load YAML/JSON config file.
+ * Returns null when the file does not exist; throws with a clear message when
+ * the file exists but cannot be parsed — a broken config must never be
+ * silently replaced by defaults.
  */
 export async function loadConfigFile(filePath: string): Promise<Record<string, unknown> | null> {
+  if (!existsSync(filePath)) return null;
+  let content: string;
   try {
-    const content = readFileSync(filePath, 'utf-8');
+    content = readFileSync(filePath, 'utf-8');
+  } catch (err) {
+    throw new Error(
+      `cannot read config file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  try {
     if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) {
       const yaml = await requireYaml();
-      return yaml.load(content) as Record<string, unknown>;
+      const parsed = yaml.load(content);
+      if (parsed === null || parsed === undefined) return {};
+      if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('config must be a YAML mapping (key: value)');
+      }
+      return parsed as Record<string, unknown>;
     }
     return JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`invalid config file ${filePath}: ${message}`);
   }
 }
 
@@ -64,19 +82,31 @@ export async function loadConfig(options: ConfigOptions = {}): Promise<ProjectCo
   const projectConfigFile = join(projectDir, 'config.yaml');
   const globalConfigFile = join(globalDir, 'config.yaml');
 
-  const projectRaw = await loadConfigFile(projectConfigFile);
-  const globalRaw = await loadConfigFile(globalConfigFile);
+  let projectRaw: Record<string, unknown> | null;
+  let globalRaw: Record<string, unknown> | null;
+  try {
+    projectRaw = await loadConfigFile(projectConfigFile);
+    globalRaw = await loadConfigFile(globalConfigFile);
+  } catch (err) {
+    throw new Error(
+      err instanceof Error ? err.message : `config error: ${String(err)}`,
+    );
+  }
 
   // Merge with precedence: defaults < global < project < overrides
-  const merged = deepMerge(
-    {},
-    ProjectConfigSchema.parse({}),            // defaults
-    globalRaw || {},                          // global config
-    projectRaw || {},                         // project config
-    options.overrides || {},                  // CLI overrides (highest)
-  );
-
-  return ProjectConfigSchema.parse(merged);
+  let merged: Record<string, unknown>;
+  try {
+    merged = deepMerge(
+      {},
+      ProjectConfigSchema.parse({}),            // defaults
+      globalRaw || {},                          // global config
+      projectRaw || {},                         // project config
+      options.overrides || {},                  // CLI overrides (highest)
+    );
+    return ProjectConfigSchema.parse(merged);
+  } catch (err) {
+    throw new Error(`invalid configuration: ${formatZodIssues(err)}`);
+  }
 }
 
 /**

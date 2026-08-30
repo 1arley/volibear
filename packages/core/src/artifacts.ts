@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ArtifactKind } from '@volibear/contracts';
 
@@ -15,11 +15,13 @@ export class ArtifactStore {
   }
 
   /**
-   * Write an artifact to the run directory.
+   * Write an artifact to the run directory (atomic write).
    */
   write(kind: ArtifactKind, data: unknown): string {
     const filePath = join(this.dir, `${kind}.json`);
-    writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    const tmp = `${filePath}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    renameSync(tmp, filePath);
     return filePath;
   }
 
@@ -44,11 +46,13 @@ export class ArtifactStore {
   }
 
   /**
-   * Write a non-JSON file (e.g., architecture.md).
+   * Write a non-JSON file (e.g., architecture.md, requirements.lock) atomically.
    */
   writeRaw(filename: string, content: string): string {
     const filePath = join(this.dir, filename);
-    writeFileSync(filePath, content, 'utf-8');
+    const tmp = `${filePath}.${process.pid}.tmp`;
+    writeFileSync(tmp, content, 'utf-8');
+    renameSync(tmp, filePath);
     return filePath;
   }
 
