@@ -10,12 +10,14 @@ import {
 import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
 import { GateRegistry, GateParams } from './gates.js';
 import { runRubberduck, RubberduckDriver } from './rubberduck.js';
+import { PermissionGuard } from './permission-guard.js';
 
 export interface RuntimeServices {
   events: EventLog;
   artifacts: ArtifactStore;
   gates: GateRegistry;
   runStore: RunStore;
+  permissionGuard?: PermissionGuard;
   cwd: string;
   runDir: string;
   config: {
@@ -153,7 +155,23 @@ async function runAgentStage(
   };
 
   try {
-    const result = await executor.runAgent(ec);
+    let result;
+    if (ctx.services.permissionGuard && agent.permissions.repository === 'read') {
+      const { result: r, violations } = await ctx.services.permissionGuard.enforce(
+        agent,
+        executor,
+        ec,
+      );
+      result = r;
+      if (violations.length > 0) {
+        for (const v of violations) {
+          events.record('permission.violation', ctx.runId, { stage: stage.id, violation: v });
+        }
+        return { kind: 'fail', error: `permission violations:\n${violations.join('\n')}` };
+      }
+    } else {
+      result = await executor.runAgent(ec);
+    }
     events.record('stage.completed', ctx.runId, {
       stage: stage.id,
       agent: stage.agent,

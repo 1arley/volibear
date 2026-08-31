@@ -23,6 +23,7 @@ export const EventTypeSchema = z.enum([
   'verification.completed',
   'gate.passed',
   'gate.failed',
+  'permission.violation',
 ]);
 
 // ── Event ──────────────────────────────────────────────

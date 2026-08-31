@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Run, RunSchema } from '@volibear/contracts';
 
@@ -7,6 +7,67 @@ function atomicWrite(filePath: string, content: string): void {
   const tmp = `${filePath}.${process.pid}.tmp`;
   writeFileSync(tmp, content, 'utf-8');
   renameSync(tmp, filePath);
+}
+
+/** Stale lock threshold: if lock is older than this, consider it stale (5 minutes). */
+const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/**
+ * Acquire an exclusive lock for a run directory.
+ * Uses a .lock file containing PID + timestamp. Detects stale locks (dead
+ * PID or older than STALE_THRESHOLD_MS). Returns true if lock acquired.
+ */
+export function acquireRunLock(runDir: string): boolean {
+  const lockPath = join(runDir, '.lock');
+
+  if (existsSync(lockPath)) {
+    try {
+      const raw = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      // Check if the owning PID is still alive
+      const pidAlive = isPidAlive(raw.pid);
+      const age = Date.now() - raw.ts;
+      if (pidAlive && age < STALE_THRESHOLD_MS) {
+        return false; // Lock held by a live process
+      }
+      // Stale lock — remove it
+      try { unlinkSync(lockPath); } catch { /* already removed */ }
+    } catch {
+      // Corrupt lock file — remove it
+      try { unlinkSync(lockPath); } catch { /* already removed */ }
+    }
+  }
+
+  // Write our lock
+  try {
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: 'wx' });
+    return true;
+  } catch {
+    return false; // Race: another process won
+  }
+}
+
+/**
+ * Release a run lock. Only removes the lock if we own it.
+ */
+export function releaseRunLock(runDir: string): void {
+  const lockPath = join(runDir, '.lock');
+  try {
+    const raw = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    if (raw.pid === process.pid) {
+      unlinkSync(lockPath);
+    }
+  } catch {
+    // Lock file missing or corrupt — nothing to release
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // Signal 0 = existence check only
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -80,20 +141,31 @@ export class RunStore {
 
   /**
    * Update a run's state and/or fields.
+   * Acquires an exclusive lock to prevent concurrent modification.
    */
   update(
     id: string,
     updates: Partial<Omit<Run, 'id' | 'created_at'>>,
   ): Run | null {
-    const run = this.load(id);
-    if (!run) return null;
-    const updated: Run = {
-      ...run,
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-    this.save(updated);
-    return updated;
+    const dir = this.runDir(id);
+    const locked = acquireRunLock(dir);
+    if (!locked) {
+      console.error(`[volibear] warning: run "${id}" is locked by another process — update skipped`);
+      return this.load(id);
+    }
+    try {
+      const run = this.load(id);
+      if (!run) return null;
+      const updated: Run = {
+        ...run,
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
+      this.save(updated);
+      return updated;
+    } finally {
+      releaseRunLock(dir);
+    }
   }
 
   /**

@@ -8,6 +8,7 @@ import {
   RepairCyclesWithinLimitGate,
   ImplementationProducedGate,
 } from './gates.js';
+import { PermissionGuard } from './permission-guard.js';
 import { RubberduckSession } from './rubberduck.js';
 import { MockExecutor, MockRubberduckDriver } from '@volibear/executors';
 import {
@@ -902,5 +903,136 @@ describe('RunOrchestrator (mock end-to-end)', () => {
     const result = await orchestrator.run(pipeline, persisted);
     expect(result).toBe('BLOCKED');
     expect(events.filter('repair.started')).toHaveLength(0);
+  });
+});
+
+// ── PermissionGuard tests ──────────────────────────────
+
+describe('PermissionGuard', () => {
+  let dir: string;
+  let guard: PermissionGuard;
+
+  beforeEach(() => {
+    dir = tempDir();
+    guard = new PermissionGuard(dir);
+  });
+
+  it('snapshot captures existing files', () => {
+    writeFileSync(join(dir, 'index.ts'), 'export const x = 1;');
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'util.ts'), 'export function util() {}');
+    const snap = guard.snapshot();
+    expect(snap.has('index.ts')).toBe(true);
+    expect(snap.has('src/util.ts')).toBe(true);
+  });
+
+  it('snapshot ignores node_modules and .volibear', () => {
+    writeFileSync(join(dir, 'app.ts'), 'const x = 1;');
+    mkdirSync(join(dir, 'node_modules'), { recursive: true });
+    writeFileSync(join(dir, 'node_modules', 'dep.js'), '');
+    mkdirSync(join(dir, '.volibear'), { recursive: true });
+    writeFileSync(join(dir, '.volibear', 'config.yaml'), '');
+    const snap = guard.snapshot();
+    expect(snap.has('app.ts')).toBe(true);
+    expect(snap.has('node_modules/dep.js')).toBe(false);
+    expect(snap.has('.volibear/config.yaml')).toBe(false);
+  });
+
+  it('diff detects added files', () => {
+    writeFileSync(join(dir, 'a.ts'), 'const a = 1;');
+    const before = guard.snapshot();
+    writeFileSync(join(dir, 'b.ts'), 'const b = 2;');
+    const after = guard.snapshot();
+    const changes = guard.diff(before, after);
+    expect(changes).toEqual([{ path: 'b.ts', kind: 'added' }]);
+  });
+
+  it('diff detects modified files', async () => {
+    writeFileSync(join(dir, 'a.ts'), 'const a = 1;');
+    const before = guard.snapshot();
+    // Small delay to ensure mtime changes
+    await new Promise((r) => setTimeout(r, 10));
+    writeFileSync(join(dir, 'a.ts'), 'const a = 2;');
+    const after = guard.snapshot();
+    const changes = guard.diff(before, after);
+    expect(changes).toEqual([{ path: 'a.ts', kind: 'modified' }]);
+  });
+
+  it('diff returns empty when nothing changed', () => {
+    writeFileSync(join(dir, 'a.ts'), 'const a = 1;');
+    const before = guard.snapshot();
+    const after = guard.snapshot();
+    const changes = guard.diff(before, after);
+    expect(changes).toHaveLength(0);
+  });
+
+  it('enforce detects write violations for read-only agents', async () => {
+    writeFileSync(join(dir, 'existing.ts'), 'original');
+
+    // Simulate an agent that writes to the filesystem
+    const mockExecutor = {
+      id: 'mock',
+      capabilities: { headless: true },
+      async runAgent() {
+        writeFileSync(join(dir, 'new-file.ts'), 'created by agent');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    };
+
+    const agent = BUILTIN_AGENTS.find((a) => a.id === 'architect')!;
+    const ctx = { cwd: dir, runDir: join(dir, '.runs', 'run-1'), task: 'test', agent: 'architect' };
+    const { violations } = await guard.enforce(agent, mockExecutor as any, ctx);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations[0]).toContain('architect');
+    expect(violations[0]).toContain('new-file.ts');
+  });
+
+  it('enforce allows writes in runDir for read-only agents', async () => {
+    writeFileSync(join(dir, 'existing.ts'), 'original');
+
+    const runDir = join(dir, '.runs', 'run-1');
+    mkdirSync(runDir, { recursive: true });
+
+    const mockExecutor = {
+      id: 'mock',
+      capabilities: { headless: true },
+      async runAgent() {
+        writeFileSync(join(runDir, 'output.json'), '{}');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    };
+
+    const agent = BUILTIN_AGENTS.find((a) => a.id === 'architect')!;
+    const ctx = { cwd: dir, runDir, task: 'test', agent: 'architect' };
+    const { violations } = await guard.enforce(agent, mockExecutor as any, ctx);
+    expect(violations).toHaveLength(0);
+  });
+});
+
+// ── RunStore lock tests ────────────────────────────────
+
+describe('RunStore lock', () => {
+  let dir: string;
+  let runStore: RunStore;
+
+  beforeEach(() => {
+    dir = tempDir();
+    runStore = new RunStore(dir);
+  });
+
+  it('update acquires and releases lock', () => {
+    const run = runStore.create('run-lock-1', 'test', 'task');
+    const updated = runStore.update(run.id, { state: 'DISCOVERY' });
+    expect(updated?.state).toBe('DISCOVERY');
+    // Lock should be released — no .lock file remaining
+    expect(existsSync(join(runStore.runDir(run.id), '.lock'))).toBe(false);
+  });
+
+  it('concurrent update from same process succeeds (re-entrant)', () => {
+    const run = runStore.create('run-lock-2', 'test', 'task');
+    const u1 = runStore.update(run.id, { state: 'DISCOVERY' });
+    expect(u1?.state).toBe('DISCOVERY');
+    const u2 = runStore.update(run.id, { state: 'ARCHITECTURE' });
+    expect(u2?.state).toBe('ARCHITECTURE');
   });
 });

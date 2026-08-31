@@ -9,6 +9,7 @@ import {
 import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
 import { GateRegistry } from './gates.js';
 import { runStage, RuntimeServices } from './stage-runner.js';
+import { PermissionGuard } from './permission-guard.js';
 
 export interface OrchestratorOptions {
   runStore: RunStore;
@@ -26,8 +27,10 @@ export interface OrchestratorOptions {
   rubberduck?: import('@volibear/contracts').RubberduckDriver;
   /** Optional human interaction; omit only for explicit headless execution. */
   rubberduckInteraction?: RubberduckInteraction;
-  /** Structured external findings provided to discovery. */
+  /** Structured external findings provided to findings. */
   findings?: unknown;
+  /** Enforces agent permission constraints (filesystem sandboxing). */
+  permissionGuard?: PermissionGuard;
   /** Called after each stage for progress reporting */
   onStage?: (stageId: string, run: Run) => void;
 }
@@ -59,6 +62,7 @@ export class RunOrchestrator {
       artifacts: opts.artifacts,
       gates: this.gates,
       runStore: opts.runStore,
+      permissionGuard: opts.permissionGuard,
       cwd: opts.cwd,
       runDir: opts.artifacts.dir,
       config: opts.config,

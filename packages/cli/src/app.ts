@@ -18,7 +18,7 @@ import {
   RubberduckDriver,
   RubberduckInteraction,
 } from '@volibear/contracts';
-import { PipelineParser, validatePipelineAgents, RunOrchestrator } from '@volibear/runtime';
+import { PipelineParser, validatePipelineAgents, RunOrchestrator, PermissionGuard } from '@volibear/runtime';
 import { ExecutorRegistry, MockRubberduckDriver, CliRubberduckDriver } from '@volibear/executors';
 import { CliOptions } from './cli.js';
 
@@ -255,6 +255,7 @@ export class App {
       runStore: this.runStore,
       events,
       artifacts,
+      permissionGuard: new PermissionGuard(this.cwd),
       cwd: this.cwd,
       agents: this.getAgents(),
       executors: this.getExecutors(),
