@@ -17,4 +17,5 @@ jobs:
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc -b
+      - run: pnpm bundle
       - run: pnpm test
