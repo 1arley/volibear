@@ -15,10 +15,11 @@ import {
   BUILTIN_AGENTS,
   Pipeline,
   ProjectConfig,
+  RubberduckDriver,
   RubberduckInteraction,
 } from '@volibear/contracts';
 import { PipelineParser, validatePipelineAgents, RunOrchestrator } from '@volibear/runtime';
-import { ExecutorRegistry, MockRubberduckDriver } from '@volibear/executors';
+import { ExecutorRegistry, MockRubberduckDriver, CliRubberduckDriver } from '@volibear/executors';
 import { CliOptions } from './cli.js';
 
 /**
@@ -181,6 +182,37 @@ export class App {
   }
 
   /**
+   * Create a rubberduck driver: uses the configured coding CLI when available
+   * (LLM-backed discovery), falls back to MockRubberduckDriver for testing.
+   */
+  createRubberduckDriver(_runId?: string): RubberduckDriver {
+    const agents = this.getAgents();
+    const rubberduckAgent = agents.get('rubberduck');
+    const executorId = rubberduckAgent?.executor ?? this.config.executor;
+
+    // Use MockRubberduckDriver only when the rubberduck agent's executor is
+    // explicitly "mock" — all other executors (opencode, codex, claude) get
+    // an LLM-backed driver that drives real discovery through the CLI.
+    if (executorId === 'mock') {
+      return new MockRubberduckDriver();
+    }
+
+    const executor = this.getExecutors().get(executorId);
+    if (!executor) {
+      // Fallback to mock when the configured executor isn't available.
+      return new MockRubberduckDriver();
+    }
+
+    return new CliRubberduckDriver(executor, {
+      cwd: this.cwd,
+      runDir: _runId ? this.runStore.runDir(_runId) : this.cwd,
+      model: rubberduckAgent?.model,
+      router: rubberduckAgent?.router,
+      instructions: rubberduckAgent?.instructions,
+    });
+  }
+
+  /**
    * Load the pipeline for this run.
    */
   async getPipeline(name?: string): Promise<Pipeline> {
@@ -218,6 +250,7 @@ export class App {
     const runDir = this.runStore.runDir(runId);
     const events = new EventLog(runDir);
     const artifacts = new ArtifactStore(runDir);
+    const rubberduck = this.createRubberduckDriver(runId);
     return new RunOrchestrator({
       runStore: this.runStore,
       events,
@@ -229,7 +262,7 @@ export class App {
         repair: this.config.repair,
         verification: this.config.verification,
       },
-      rubberduck: new MockRubberduckDriver(),
+      rubberduck,
       rubberduckInteraction: options.rubberduckInteraction,
       findings: options.findings,
       onStage: options.onStage,

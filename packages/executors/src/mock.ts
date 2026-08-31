@@ -122,6 +122,7 @@ export class MockExecutor implements Executor {
       files_changed: [],
       files_deleted: [],
       summary: 'Mock implementation',
+      _mock: true,
     });
     return {
       exitCode: 0,

@@ -384,13 +384,19 @@ function buildGateParams(gateId: string, ctx: StageRunContext): GateParams {
   const req = ctx.getRequirements();
   const review = ctx.getReview();
   const verification = ctx.getVerification();
-  // Existence map so the artifacts-exist gate can be used declaratively.
+  // Existence/content map so gates can inspect artifacts declaratively.
   const artifactNames: Array<'requirements' | 'architecture' | 'implementation' | 'review' | 'verification' | 'findings'> = [
     'requirements', 'architecture', 'implementation', 'review', 'verification', 'findings',
   ];
   const extra: Record<string, unknown> = {};
   for (const name of artifactNames) {
-    extra[name] = ctx.services.artifacts.exists(name);
+    const exists = ctx.services.artifacts.exists(name);
+    extra[name] = exists;
+    // For implementation, pass the content so the gate can check real files.
+    if (name === 'implementation' && exists) {
+      const impl = ctx.services.artifacts.read<Record<string, unknown>>('implementation');
+      if (impl) extra[name] = impl;
+    }
   }
   return {
     requirements: req as never,

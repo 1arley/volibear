@@ -157,6 +157,60 @@ export class ArtifactsExistGate implements Gate {
 }
 
 /**
+ * Gate: implementation produced real file changes (not just mock artifacts).
+ * Checks that implementation.json lists files that would affect the actual
+ * project, not only files inside the run directory.
+ */
+export class ImplementationProducedGate implements Gate {
+  readonly id = 'implementation-produced';
+  readonly description = 'Implementation must have produced real file changes';
+
+  evaluate(params: GateParams): GateResult {
+    const impl = params.extra?.['implementation'] as Record<string, unknown> | undefined;
+    if (!impl) {
+      return {
+        passed: false,
+        gate: this.id,
+        reason: 'implementation.json artifact missing — no implementation was performed',
+      };
+    }
+
+    // The mock executor marks its output with _mock: true — this is not real
+    // implementation work, just a deterministic placeholder.
+    if (impl._mock === true) {
+      return {
+        passed: false,
+        gate: this.id,
+        reason: 'implementation is a mock placeholder (no real files were created or modified)',
+      };
+    }
+
+    const created = (impl.files_created as string[] | undefined) ?? [];
+    const changed = (impl.files_changed as string[] | undefined) ?? [];
+    const deleted = (impl.files_deleted as string[] | undefined) ?? [];
+    const allFiles = [...created, ...changed, ...deleted];
+
+    // Filter out files that are only inside the run directory (mock artifacts)
+    const realFiles = allFiles.filter(
+      (f) => !f.startsWith('.runs/') && !f.startsWith('run-'),
+    );
+
+    if (realFiles.length === 0) {
+      return {
+        passed: false,
+        gate: this.id,
+        reason: `no real file changes — implementation only produced ${allFiles.length} run-directory artifact(s)`,
+      };
+    }
+    return {
+      passed: true,
+      gate: this.id,
+      reason: `implementation produced ${realFiles.length} real file change(s)`,
+    };
+  }
+}
+
+/**
  * Gate registry — maps gate IDs to gate instances.
  */
 export class GateRegistry {
@@ -168,6 +222,7 @@ export class GateRegistry {
     this.register(new NoFindingsAboveThresholdGate());
     this.register(new RepairCyclesWithinLimitGate());
     this.register(new ArtifactsExistGate());
+    this.register(new ImplementationProducedGate());
   }
 
   register(gate: Gate): void {

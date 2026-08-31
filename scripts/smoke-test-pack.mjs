@@ -179,7 +179,7 @@ check(`${binName} install --project opencode writes the bridge agent`, () => {
   assert(!content.includes('model:'), 'bridge template must not hardcode a model');
 });
 check(`${binName} build runs the feature pipeline end to end`, () => {
-  const out = cli(['build', 'add a health endpoint', '--accept-defaults']);
+  const out = cli(['build', 'add a health endpoint', '--accept-defaults', '--allow-mock']);
   assert(/PASS/.test(out), `pipeline did not pass:\n${out}`);
 });
 

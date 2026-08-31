@@ -30,6 +30,21 @@ export async function runFix(positional: string[], options: CliOptions): Promise
     console.log('');
   }
 
+  // Guard: mock executor cannot perform real implementation work.
+  if (!options.allowMock) {
+    const agents = app.getAgents();
+    const executorIds = new Set([...agents.values()].map((a) => a.executor));
+    const allMock = executorIds.size === 1 && executorIds.has('mock');
+    if (allMock) {
+      console.error('\n✗ All agents use the "mock" executor — no real implementation will be performed.');
+      console.error('  Configure a real executor (opencode, codex, claude) in .volibear/config.yaml:');
+      console.error('    volibear install --executor opencode');
+      console.error('  Or override for this run: volibear fix <findings> --executor opencode');
+      console.error('  Or skip this guard (for testing): --allow-mock');
+      return 1;
+    }
+  }
+
   try {
     app.validateExecutors();
   } catch (err) {

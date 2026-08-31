@@ -6,6 +6,7 @@ import {
   BlockingQuestionsResolvedGate,
   NoFindingsAboveThresholdGate,
   RepairCyclesWithinLimitGate,
+  ImplementationProducedGate,
 } from './gates.js';
 import { RubberduckSession } from './rubberduck.js';
 import { MockExecutor, MockRubberduckDriver } from '@volibear/executors';
@@ -136,6 +137,73 @@ describe('RepairCyclesWithinLimitGate', () => {
   it('fails when exceeded', () => {
     const r = gate.evaluate({ repairCycle: 4, maxRepairCycles: 3 });
     expect(r.passed).toBe(false);
+  });
+});
+
+describe('ImplementationProducedGate', () => {
+  const gate = new ImplementationProducedGate();
+
+  it('fails when implementation.json is missing', () => {
+    const r = gate.evaluate({ extra: {} });
+    expect(r.passed).toBe(false);
+    expect(r.reason).toContain('missing');
+  });
+
+  it('fails when implementation only has run-directory files', () => {
+    const r = gate.evaluate({
+      extra: {
+        implementation: {
+          files_created: ['.runs/run-abc/implementation.txt', '.runs/run-abc/notes.md'],
+          files_changed: [],
+          files_deleted: [],
+        },
+      },
+    });
+    expect(r.passed).toBe(false);
+    expect(r.reason).toContain('no real file changes');
+  });
+
+  it('fails when implementation is a mock placeholder', () => {
+    const r = gate.evaluate({
+      extra: {
+        implementation: {
+          files_created: ['implementation.txt'],
+          files_changed: [],
+          files_deleted: [],
+          _mock: true,
+        },
+      },
+    });
+    expect(r.passed).toBe(false);
+    expect(r.reason).toContain('mock placeholder');
+  });
+
+  it('passes when implementation has real file changes', () => {
+    const r = gate.evaluate({
+      extra: {
+        implementation: {
+          files_created: ['src/auth.ts', 'src/auth.test.ts'],
+          files_changed: ['tsconfig.json'],
+          files_deleted: [],
+        },
+      },
+    });
+    expect(r.passed).toBe(true);
+    expect(r.reason).toContain('3 real file change');
+  });
+
+  it('passes with mixed real and run-directory files', () => {
+    const r = gate.evaluate({
+      extra: {
+        implementation: {
+          files_created: ['lib/utils.ts', 'run-abc/dummy.txt'],
+          files_changed: [],
+          files_deleted: ['old-file.ts'],
+        },
+      },
+    });
+    expect(r.passed).toBe(true);
+    expect(r.reason).toContain('2 real file change');
   });
 });
 

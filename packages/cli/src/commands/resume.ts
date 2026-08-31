@@ -31,7 +31,7 @@ export async function runResume(_positional: string[], options: CliOptions): Pro
 
   const runs = app.runStore.list();
   if (runs.length === 0) {
-    console.error('No runs to resume.');
+    console.error('No runs to resume. Start one with: volibear build "<task>"');
     return 1;
   }
 
@@ -64,6 +64,18 @@ export async function runResume(_positional: string[], options: CliOptions): Pro
   if (!options.acceptDefaults && interactiveWorkRemains && !(stdin.isTTY && stdout.isTTY)) {
     console.log('Non-interactive resume detected. Use --accept-defaults to delegate decisions automatically.');
     return 2;
+  }
+
+  // Guard: mock executor cannot perform real implementation work.
+  if (!options.allowMock) {
+    const agents = app.getAgents();
+    const executorIds = new Set([...agents.values()].map((a) => a.executor));
+    const allMock = executorIds.size === 1 && executorIds.has('mock');
+    if (allMock && target.state !== 'WAITING_FOR_USER') {
+      console.error('\n✗ All agents use the "mock" executor — no real implementation will be performed.');
+      console.error('  Configure a real executor (opencode, codex, claude) in .volibear/config.yaml');
+      return 1;
+    }
   }
 
   try {

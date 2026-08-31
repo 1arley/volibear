@@ -24,6 +24,7 @@ Options:
   --pipeline <name>           Select pipeline
   --accept-defaults           Delegate blocking decisions automatically (non-interactive)
   --force                     Overwrite existing install files / retry a BLOCKED run (resume)
+  --allow-mock                Allow mock executor (for testing/CI — skips mock guard)
   --project                   Install into the current project
   --global                    Install into ~/.volibear/
   --both                      Install into both project and ~/.volibear/
@@ -49,6 +50,7 @@ export interface CliOptions {
   verbose?: boolean;
   acceptDefaults?: boolean;
   force?: boolean;
+  allowMock?: boolean;
 }
 
 export interface ParsedArgs {
@@ -108,6 +110,9 @@ export function parseArgs(args: string[]): ParsedArgs {
         break;
       case '--accept-defaults':
         options.acceptDefaults = true;
+        break;
+      case '--allow-mock':
+        options.allowMock = true;
         break;
       case '--force':
         options.force = true;
