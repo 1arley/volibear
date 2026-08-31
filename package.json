@@ -1,6 +1,6 @@
 {
   "name": "volibearq",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Portable multi-agent engineering pipeline runtime",
   "license": "MIT",
   "type": "module",
