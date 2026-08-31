@@ -24,7 +24,7 @@ export const RequirementsSchema = z.object({
   unresolved: z.array(z.object({
     id: z.string(),
     question: z.string(),
-    type: z.enum(['BLOCKING', 'OPTIONAL', 'INFERABLE']),
+    type: z.enum(['BLOCKING', 'OPTIONAL', 'INFERABLE']).default('BLOCKING'),
   })).default([]),
 });
 

@@ -153,11 +153,7 @@ export function createInstallPlan(
 export function configContent(selection: InstallSelection, scope: 'project' | 'global'): string {
   const agentLines = AGENT_INSTRUCTION_FILES.map((f) => {
     const id = f.replace(/\.md$/, '');
-    const model = id === 'architect' ? 'gpt-5.6-terra'
-      : id === 'reviewer' ? 'glm-5.2'
-        : id === 'developer' || id === 'fixer' ? 'deepseek-v4-flash'
-          : 'gpt-5.6-luna';
-    return `  ${id}:\n    executor: ${selection.executor}\n    model: ${model}`;
+    return `  ${id}:\n    executor: ${selection.executor}`;
   }).join('\n');
 
   const pipeline = selection.pipelines[0] ?? 'feature';

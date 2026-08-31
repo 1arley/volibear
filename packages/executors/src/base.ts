@@ -32,6 +32,13 @@ export function buildAgentPrompt(ctx: ExecutorContext): string {
   if (ctx.context) {
     lines.push('', 'Repository context:', ctx.context);
   }
+  if (ctx.pipelineContext && Object.keys(ctx.pipelineContext).length > 0) {
+    lines.push('', '# Previous stage outputs');
+    for (const [kind, data] of Object.entries(ctx.pipelineContext)) {
+      const preview = JSON.stringify(data, null, 2).slice(0, 4000);
+      lines.push('', `## ${kind}`, '```json', preview, '```');
+    }
+  }
   return lines.join('\n');
 }
 
@@ -84,11 +91,15 @@ export abstract class CliExecutor implements Executor {
       let stdout = '';
       let stderr = '';
       let killed = false;
-      const child = spawn(this.binary, [...args, prompt], {
+      const child = spawn(this.binary, args, {
         cwd: ctx.cwd,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+      // Pipe prompt via stdin instead of passing as CLI argument.
+      // This prevents TUI-based CLIs from hanging on argument parsing.
+      child.stdin.write(prompt);
+      child.stdin.end();
       child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
       child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
 

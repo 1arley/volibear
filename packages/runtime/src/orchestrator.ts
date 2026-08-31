@@ -98,6 +98,7 @@ export class RunOrchestrator {
       getRequirements: () => this.services.artifacts.read('requirements'),
       getReview: () => this.services.artifacts.read('review'),
       getVerification: () => this.services.artifacts.read('verification'),
+      pipelineContext: {} as Record<string, unknown>,
     };
 
     for (const stage of pipeline.stages) {
@@ -132,6 +133,8 @@ export class RunOrchestrator {
             completed_stages: [...new Set([...run.completed_stages, stage.id])],
             repair_cycle: ctx.repairCycle,
           }) ?? run;
+          // Accumulate this stage's output artifacts into pipelineContext
+          accumulateArtifacts(ctx);
           break;
 
         case 'waiting-for-user': {
@@ -175,5 +178,15 @@ export class RunOrchestrator {
     events.record('run.completed', run.id, { status: 'pass' });
     run = runStore.update(run.id, { state: 'PASS', current_stage: undefined }) ?? run;
     return 'PASS';
+  }
+}
+
+/** Accumulate artifacts produced by the latest stage into pipelineContext. */
+function accumulateArtifacts(ctx: import('./stage-runner.js').StageRunContext): void {
+  const kinds = ['discovery', 'requirements', 'architecture', 'review', 'verification', 'findings'] as const;
+  for (const kind of kinds) {
+    if (ctx.services.artifacts.exists(kind)) {
+      ctx.pipelineContext[kind] = ctx.services.artifacts.read(kind);
+    }
   }
 }

@@ -42,6 +42,8 @@ export interface StageRunContext {
   rubberduckInteraction?: RubberduckInteraction;
   findings?: unknown;
   findingsFile?: string;
+  /** Accumulated outputs from previous pipeline stages */
+  pipelineContext: Record<string, unknown>;
 }
 
 export type StageOutcome =
@@ -152,6 +154,7 @@ async function runAgentStage(
     instructions: agent.instructions,
     findingsFile: ctx.findingsFile,
     context: buildFindingsContext(ctx.findings),
+    pipelineContext: ctx.pipelineContext,
   };
 
   try {

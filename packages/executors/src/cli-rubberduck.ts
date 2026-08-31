@@ -151,10 +151,15 @@ Output ONLY the JSON object, nothing else.`;
   }
 
   private parseJson(stdout: string): unknown {
+    // Strip ANSI escape codes and markdown fences before parsing.
+    const cleaned = stdout
+      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')   // ANSI codes
+      .replace(/```[\s\S]*?\n/g, '')             // markdown fences
+      .replace(/^>.*$/gm, '');                   // opencode header lines
     // Find the first JSON token — prefer array `[` over object `{` since
     // discover() returns a JSON array of questions.
-    const arrStart = stdout.indexOf('[');
-    const objStart = stdout.indexOf('{');
+    const arrStart = cleaned.indexOf('[');
+    const objStart = cleaned.indexOf('{');
     let start = -1;
     if (arrStart !== -1 && (objStart === -1 || arrStart < objStart)) {
       start = arrStart;
@@ -164,7 +169,7 @@ Output ONLY the JSON object, nothing else.`;
     if (start === -1) {
       throw new Error(`rubberduck driver returned no JSON: ${stdout.slice(0, 200)}`);
     }
-    return this.extractJson(stdout, start);
+    return this.extractJson(cleaned, start);
   }
 
   private extractJson(text: string, start: number): unknown {

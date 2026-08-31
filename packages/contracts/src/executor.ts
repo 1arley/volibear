@@ -41,6 +41,8 @@ export interface ExecutorContext {
   instructions?: string;
   /** Path to external findings, if any */
   findingsFile?: string;
+  /** Accumulated outputs from previous pipeline stages */
+  pipelineContext?: Record<string, unknown>;
   /** Callback for streaming output */
   onOutput?: (chunk: string) => void;
 }
