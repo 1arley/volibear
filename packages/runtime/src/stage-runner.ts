@@ -26,6 +26,7 @@ export interface RuntimeServices {
   permissionGuard?: PermissionGuard;
   cwd: string;
   runDir: string;
+  onOutput?: (chunk: string) => void;
   config: {
     repair: { max_cycles: number; reject_on: string[] };
     verification: { commands: string[] };
@@ -197,13 +198,19 @@ async function runAgentStage(
     resumeSessionId: existingExecution?.session_id,
     onMetadata: (metadata) => {
       ctx.services.executions.update(executionId, {
-        status: 'session_created',
+        status: metadata.remoteStatus === 'busy' || metadata.remoteStatus === 'retry'
+          ? 'running'
+          : 'session_created',
         session_id: metadata.sessionId,
         remote_agent: metadata.remoteAgent,
         server_url: metadata.serverUrl,
+        message_id: metadata.messageId,
+        last_event_at: metadata.lastEventAt,
+        remote_status: metadata.remoteStatus,
         started_at: metadata.startedAt,
       });
     },
+    onOutput: ctx.services.onOutput,
   };
 
   try {

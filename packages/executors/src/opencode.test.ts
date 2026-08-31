@@ -9,17 +9,26 @@ function context(overrides: Partial<ExecutorContext> = {}): ExecutorContext {
 
 function fakeManager(agent = 'volibear-developer') {
   const create = vi.fn(async (..._args: any[]) => ({ data: { id: 'ses_1' } }));
-  const prompt = vi.fn(async (..._args: any[]) => ({ data: { parts: [{ type: 'text', text: '{"summary":"done"}' }] } }));
+  const promptAsync = vi.fn(async (..._args: any[]) => ({ data: undefined }));
+  const messages = vi.fn(async (..._args: any[]) => ({ data: [{ info: { role: 'assistant' }, parts: [{ type: 'text', text: '{"summary":"done"}' }] }] }));
   const agents = vi.fn(async (..._args: any[]) => ({ data: [{ name: agent, mode: 'subagent' }] }));
   const abort = vi.fn(async (..._args: any[]) => ({ data: true }));
+  const subscribe = vi.fn(async (..._args: any[]) => ({
+    stream: (async function* () {
+      yield { type: 'message.part.updated', properties: { part: { sessionID: 'ses_1', messageID: 'msg_1' }, delta: 'chunk' } };
+      yield { type: 'session.idle', properties: { sessionID: 'ses_1' } };
+    })(),
+  }));
+  const showToast = vi.fn(async (..._args: any[]) => ({ data: true }));
+  const replyPermission = vi.fn(async (..._args: any[]) => ({ data: true }));
   const manager = {
     acquire: vi.fn(async () => ({
       url: 'http://127.0.0.1:1234', ownership: 'external', close: async () => undefined,
-      client: { app: { agents }, session: { create, prompt, abort } },
+      client: { app: { agents }, session: { create, promptAsync, messages, abort }, event: { subscribe }, tui: { showToast }, postSessionIdPermissionsPermissionId: replyPermission },
     })),
     close: vi.fn(async () => undefined),
   };
-  return { manager: manager as unknown as OpenCodeServerManager, create, prompt, agents, abort };
+  return { manager: manager as unknown as OpenCodeServerManager, create, promptAsync, messages, agents, abort, subscribe, showToast, replyPermission };
 }
 
 describe('OpenCodeExecutor SDK transport', () => {
@@ -33,7 +42,7 @@ describe('OpenCodeExecutor SDK transport', () => {
     expect(fake.create).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.not.objectContaining({ parentID: expect.anything() }),
     }));
-    const promptOptions = fake.prompt.mock.calls[0][0];
+    const promptOptions = fake.promptAsync.mock.calls[0][0];
     expect(promptOptions.body.agent).toBe('volibear-developer');
     expect(promptOptions.body.model).toBeUndefined();
   });
@@ -43,6 +52,9 @@ describe('OpenCodeExecutor SDK transport', () => {
     fake.create
       .mockResolvedValueOnce({ data: { id: 'ses_1' } })
       .mockResolvedValueOnce({ data: { id: 'ses_2' } });
+    fake.subscribe
+      .mockResolvedValueOnce({ stream: (async function* () { yield { type: 'session.idle', properties: { sessionID: 'ses_1' } }; })() })
+      .mockResolvedValueOnce({ stream: (async function* () { yield { type: 'session.idle', properties: { sessionID: 'ses_2' } }; })() });
     const executor = new OpenCodeExecutor(1_000, fake.manager);
     const first = await executor.runAgent(context());
     const second = await executor.runAgent(context());
@@ -64,7 +76,32 @@ describe('OpenCodeExecutor SDK transport', () => {
     expect(onMetadata).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'ses_1', remoteAgent: 'volibear-developer', transport: 'opencode-sdk',
     }));
-    expect(onMetadata.mock.invocationCallOrder[0]).toBeLessThan(fake.prompt.mock.invocationCallOrder[0]);
+    expect(onMetadata.mock.invocationCallOrder[0]).toBeLessThan(fake.promptAsync.mock.invocationCallOrder[0]);
+  });
+
+  it('streams OpenCode events and reports the terminal remote status', async () => {
+    const fake = fakeManager();
+    const onOutput = vi.fn();
+    const onMetadata = vi.fn();
+    const result = await new OpenCodeExecutor(1_000, fake.manager).runAgent(context({ onOutput, onMetadata }));
+    expect(onOutput).toHaveBeenCalledWith('chunk');
+    expect(result.metadata).toEqual(expect.objectContaining({ messageId: 'msg_1', remoteStatus: 'idle' }));
+    expect(fake.subscribe).toHaveBeenCalled();
+    expect(fake.showToast).toHaveBeenCalledTimes(2);
+  });
+
+  it('resolves OpenCode permission prompts from the stage policy', async () => {
+    const fake = fakeManager();
+    fake.subscribe.mockResolvedValueOnce({ stream: (async function* () {
+      yield { type: 'permission.updated', properties: { id: 'perm_1', sessionID: 'ses_1', type: 'edit', title: 'Edit file' } };
+      yield { type: 'session.idle', properties: { sessionID: 'ses_1' } };
+    })() });
+    await new OpenCodeExecutor(1_000, fake.manager).runAgent(context({
+      permissions: { repository: 'write', shell: 'denied', network: false },
+    }));
+    expect(fake.replyPermission).toHaveBeenCalledWith(expect.objectContaining({
+      path: { id: 'ses_1', permissionID: 'perm_1' }, body: { response: 'once' },
+    }));
   });
 
   it('closes the shared manager', async () => {

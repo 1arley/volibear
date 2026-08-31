@@ -61,7 +61,7 @@ export async function runResume(_positional: string[], options: CliOptions): Pro
   // discovery work remains; beyond that stage the pipeline can proceed.
   const interactiveWorkRemains =
     target.current_stage === 'rubberduck' || target.current_stage === 'discovery';
-  if (!options.acceptDefaults && interactiveWorkRemains && !(stdin.isTTY && stdout.isTTY)) {
+  if (!options.acceptDefaults && !options.answer && interactiveWorkRemains && !(stdin.isTTY && stdout.isTTY)) {
     console.log('Non-interactive resume detected. Use --accept-defaults to delegate decisions automatically.');
     return 2;
   }
@@ -91,7 +91,7 @@ export async function runResume(_positional: string[], options: CliOptions): Pro
       .read<ExternalFindingsFile>('findings') ?? undefined;
     const orchestrator = app.createOrchestrator(target.id, {
       findings,
-      rubberduckInteraction: createRubberduckInteraction(options.acceptDefaults),
+      rubberduckInteraction: createRubberduckInteraction(options.acceptDefaults, options.answer),
       onStage: (stageId, current) => {
         console.log(`  stage: ${stageId} [${current.state}]`);
       },

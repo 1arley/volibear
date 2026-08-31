@@ -245,13 +245,19 @@ export class App {
             handoff,
             onMetadata: (metadata) => {
               executionStore.update(executionId, {
-                status: 'session_created',
+                status: metadata.remoteStatus === 'busy' || metadata.remoteStatus === 'retry'
+                  ? 'running'
+                  : 'session_created',
                 session_id: metadata.sessionId,
                 remote_agent: metadata.remoteAgent,
                 server_url: metadata.serverUrl,
+                message_id: metadata.messageId,
+                last_event_at: metadata.lastEventAt,
+                remote_status: metadata.remoteStatus,
                 started_at: metadata.startedAt,
               });
             },
+            onOutput: (chunk: string) => process.stdout.write(chunk),
           };
         },
         complete: (operation, result) => {
@@ -303,6 +309,7 @@ export class App {
       onStage?: (stageId: string, run: import('@volibear/contracts').Run) => void;
       rubberduckInteraction?: RubberduckInteraction;
       findings?: unknown;
+      onOutput?: (chunk: string) => void;
     } = {},
   ) {
     const runDir = this.runStore.runDir(runId);
@@ -325,6 +332,7 @@ export class App {
       rubberduckInteraction: options.rubberduckInteraction,
       findings: options.findings,
       onStage: options.onStage,
+      onOutput: options.onOutput ?? ((chunk) => process.stdout.write(chunk)),
     });
   }
 

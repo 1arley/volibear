@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { Stage } from '@volibear/contracts';
 import { CliOptions } from '../cli.js';
 import { App } from '../app.js';
+import { ArtifactStore } from '@volibear/core';
 
 const STATE_SYMBOL: Record<string, string> = {
   PASS: '✓',
@@ -39,6 +40,17 @@ export async function runStatus(_positional: string[], options: CliOptions): Pro
   }
   if (latest.error) {
     console.log(`Error: ${latest.error}`);
+  }
+
+  if (latest.state === 'WAITING_FOR_USER' && latest.current_stage === 'rubberduck') {
+    const snapshot = new ArtifactStore(app.runStore.runDir(latest.id)).read<{ questions?: Array<{ id: string; text: string; type: string; answer?: string }> }>('discovery');
+    const pending = snapshot?.questions?.filter((q) => q.type === 'BLOCKING' && q.answer === undefined) ?? [];
+    if (pending.length > 0) {
+      console.log('');
+      console.log('Pending decisions:');
+      for (const question of pending) console.log(`  ${question.id} [${question.type}] ${question.text}`);
+      console.log('Resume in a terminal, or use `volibear resume --accept-defaults`.');
+    }
   }
 
   // Full stage checklist when the pipeline definition is available.

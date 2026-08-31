@@ -79,9 +79,37 @@ export class AcceptDefaultsInteraction implements RubberduckInteraction {
   }
 }
 
+/** Supplies one host-collected answer, then falls back to safe pause behavior. */
+export class SubmittedAnswerInteraction implements RubberduckInteraction {
+  private used = false;
+
+  constructor(private readonly submittedAnswer: string) {
+  }
+
+  async answer(
+    question: RubberduckQuestion,
+    remainingBlocking: number,
+  ): Promise<RubberduckAnswer> {
+    if (!this.used) {
+      this.used = true;
+      return { kind: 'answer', answer: this.submittedAnswer };
+    }
+    return new PauseInteraction().answer(question, remainingBlocking);
+  }
+
+  async confirmLock(): Promise<boolean> {
+    return this.used;
+  }
+}
+
 /** Safe non-interactive default: persist discovery and wait for a human. */
 export class PauseInteraction implements RubberduckInteraction {
-  async answer(): Promise<RubberduckAnswer> {
+  async answer(question: RubberduckQuestion, remainingBlocking: number): Promise<RubberduckAnswer> {
+    // In agent-hosted/non-TTY runs there is no readline prompt. Emit a
+    // human-readable handoff so hosts such as OpenCode can surface it.
+    console.error(`\nRubberduck requires input (${remainingBlocking} blocking decision(s) remain).`);
+    console.error(`${question.id} [${question.type}] ${question.text}`);
+    console.error('Resume in a terminal, or rerun with --accept-defaults to delegate.');
     return { kind: 'pause' };
   }
 
@@ -92,8 +120,10 @@ export class PauseInteraction implements RubberduckInteraction {
 
 export function createRubberduckInteraction(
   acceptDefaults = false,
+  submittedAnswer?: string,
 ): RubberduckInteraction {
   if (acceptDefaults) return new AcceptDefaultsInteraction();
+  if (submittedAnswer?.trim()) return new SubmittedAnswerInteraction(submittedAnswer.trim());
   if (stdin.isTTY && stdout.isTTY) return new TerminalRubberduckInteraction();
   return new PauseInteraction();
 }

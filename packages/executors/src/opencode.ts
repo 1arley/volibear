@@ -5,8 +5,8 @@ import { OpenCodeServerManager, unwrapSdkData } from './opencode-client.js';
 interface AgentInfo { name?: string }
 interface SessionInfo { id: string; parentID?: string }
 interface PromptPart { type?: string; text?: string }
-interface PromptInfo { parts?: PromptPart[] }
 interface MessageInfo { info?: { role?: string }; parts?: PromptPart[] }
+interface OpenCodeEvent { type?: string; properties?: Record<string, any> }
 
 function parseJsonObject(text: string): Record<string, unknown> | undefined {
   const cleaned = text.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
@@ -86,7 +86,9 @@ export class OpenCodeExecutor implements Executor {
       };
       await ctx.onMetadata?.(metadata);
       const handoff = ctx.handoff ?? { schema_version: 1, task: ctx.task };
-      const promptResponse = await connection.client.session.prompt({
+      await this.toast(connection.client, ctx.cwd, `Volibear ${ctx.agent} started`, 'info');
+      const waiting = this.waitForSession(connection.client, ctx, sessionId, metadata, controller.signal);
+      await connection.client.session.promptAsync({
         query: { directory: ctx.cwd },
         path: { id: sessionId },
         body: {
@@ -96,15 +98,13 @@ export class OpenCodeExecutor implements Executor {
         throwOnError: true,
         signal: controller.signal,
       });
-      const prompt = unwrapSdkData<PromptInfo>(promptResponse as never);
-      const stdout = (prompt.parts ?? [])
-        .filter((part) => part.type === 'text' && typeof part.text === 'string')
-        .map((part) => part.text)
-        .join('\n');
+      const eventMetadata = await waiting;
+      const stdout = await this.readLatestAssistant(connection.client, ctx.cwd, sessionId, controller.signal);
+      await this.toast(connection.client, ctx.cwd, `Volibear ${ctx.agent} completed`, 'success');
       return {
         exitCode: 0, stdout, stderr: '',
         structured: parseJsonObject(stdout) ?? { output: stdout },
-        metadata: { ...metadata, completedAt: new Date().toISOString() },
+        metadata: { ...metadata, ...eventMetadata, completedAt: new Date().toISOString() },
       };
     } catch (error) {
       if (sessionId) {
@@ -148,20 +148,124 @@ export class OpenCodeExecutor implements Executor {
         .filter((part) => part.type === 'text' && typeof part.text === 'string')
         .map((part) => part.text)
         .join('\n');
-      if (!stdout.trim()) return undefined;
+      let recoveredOutput = stdout;
+      let eventMetadata: Partial<import('@volibear/contracts').ExecutorMetadata> = {};
+      if (!recoveredOutput.trim()) {
+        const statusesResponse = await client.session.status({
+          query: { directory: ctx.cwd }, throwOnError: true, signal,
+        });
+        const statuses = unwrapSdkData<Record<string, { type?: string }>>(statusesResponse as never) ?? {};
+        if (statuses[sessionId]?.type !== 'idle') {
+          eventMetadata = await this.waitForSession(client, ctx, sessionId, {
+            transport: 'opencode-sdk', sessionId, remoteAgent, serverUrl, startedAt,
+          }, signal);
+          recoveredOutput = await this.readLatestAssistant(client, ctx.cwd, sessionId, signal);
+        }
+      }
+      if (!recoveredOutput.trim()) return undefined;
       return {
         exitCode: 0,
-        stdout,
+        stdout: recoveredOutput,
         stderr: '',
-        structured: parseJsonObject(stdout) ?? { output: stdout },
+        structured: parseJsonObject(recoveredOutput) ?? { output: recoveredOutput },
         metadata: {
           transport: 'opencode-sdk', sessionId, remoteAgent, serverUrl,
-          startedAt, completedAt: new Date().toISOString(), recovered: true,
+          startedAt, completedAt: new Date().toISOString(), recovered: true, ...eventMetadata,
         },
       };
     } catch {
       return undefined;
     }
+  }
+
+  private async waitForSession(
+    client: any,
+    ctx: ExecutorContext,
+    sessionId: string,
+    metadata: import('@volibear/contracts').ExecutorMetadata,
+    signal: AbortSignal,
+  ): Promise<Partial<import('@volibear/contracts').ExecutorMetadata>> {
+    const subscription = await client.event.subscribe({
+      query: { directory: ctx.cwd }, throwOnError: true, signal,
+    });
+    let lastEventAt: string | undefined;
+    let messageId: string | undefined;
+    for await (const raw of subscription.stream as AsyncIterable<OpenCodeEvent>) {
+      const event = raw as OpenCodeEvent;
+      const properties = event.properties ?? {};
+      const eventSessionId = properties.sessionID ?? properties.part?.sessionID;
+      if (eventSessionId !== sessionId) continue;
+      lastEventAt = new Date().toISOString();
+      messageId = properties.messageID ?? properties.part?.messageID ?? messageId;
+
+      if (event.type === 'message.part.updated') {
+        const delta = properties.delta;
+        if (typeof delta === 'string' && delta) ctx.onOutput?.(delta);
+      }
+      if (event.type === 'session.error') {
+        await ctx.onMetadata?.({ ...metadata, messageId, lastEventAt, remoteStatus: 'error' });
+        throw new Error(`OpenCode session ${sessionId} failed: ${JSON.stringify(properties.error ?? 'unknown error')}`);
+      }
+      if (event.type === 'permission.updated') {
+        const response = this.permissionResponse(ctx, String(properties.type ?? ''));
+        ctx.onOutput?.(`\n[opencode] permission ${response === 'once' ? 'allowed' : 'rejected'}: ${properties.title ?? properties.type ?? properties.id}\n`);
+        await client.postSessionIdPermissionsPermissionId({
+          query: { directory: ctx.cwd },
+          path: { id: sessionId, permissionID: properties.id },
+          body: { response },
+          throwOnError: true,
+          signal,
+        });
+        await this.toast(client, ctx.cwd, `Permission ${response === 'once' ? 'allowed' : 'rejected'}: ${properties.title ?? properties.type}`, response === 'once' ? 'info' : 'warning');
+      }
+      if (event.type === 'session.status') {
+        const status = properties.status?.type as 'busy' | 'idle' | 'retry' | undefined;
+        if (status) await ctx.onMetadata?.({ ...metadata, messageId, lastEventAt, remoteStatus: status });
+        if (status === 'idle') return { messageId, lastEventAt, remoteStatus: 'idle' };
+      }
+      if (event.type === 'session.idle') {
+        await ctx.onMetadata?.({ ...metadata, messageId, lastEventAt, remoteStatus: 'idle' });
+        return { messageId, lastEventAt, remoteStatus: 'idle' };
+      }
+    }
+    throw new Error(`OpenCode event stream closed before session ${sessionId} became idle`);
+  }
+
+  private permissionResponse(ctx: ExecutorContext, type: string): 'once' | 'reject' {
+    const normalized = type.toLowerCase();
+    if (['edit', 'write', 'apply_patch'].some((name) => normalized.includes(name))) {
+      return ctx.permissions?.repository === 'write' ? 'once' : 'reject';
+    }
+    if (['bash', 'shell'].some((name) => normalized.includes(name))) {
+      return ctx.permissions?.shell === 'full' ? 'once' : 'reject';
+    }
+    if (['web', 'network', 'fetch'].some((name) => normalized.includes(name))) {
+      return ctx.permissions?.network === true ? 'once' : 'reject';
+    }
+    return 'reject';
+  }
+
+  private async readLatestAssistant(
+    client: any,
+    cwd: string,
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const response = await client.session.messages({
+      query: { directory: cwd }, path: { id: sessionId }, throwOnError: true, signal,
+    });
+    const messages = unwrapSdkData<MessageInfo[]>(response as never);
+    const assistant = [...messages].reverse().find((message) => message.info?.role === 'assistant');
+    return (assistant?.parts ?? [])
+      .filter((part) => part.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join('\n');
+  }
+
+  private async toast(client: any, cwd: string, message: string, variant: string): Promise<void> {
+    try {
+      await client.tui?.showToast({ query: { directory: cwd }, body: { message, variant } });
+    } catch { /* TUI is optional for headless/external servers. */ }
   }
 
   close(): Promise<void> {

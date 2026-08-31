@@ -38,4 +38,10 @@ describe('parseArgs', () => {
     expect(positional).toEqual(['opencode', 'codex']);
     expect(options.both).toBe(true);
   });
+
+  it('parses a host-provided resume answer', () => {
+    const { command, options } = parseArgs(['resume', '--answer', 'Use SQLite']);
+    expect(command).toBe('resume');
+    expect(options.answer).toBe('Use SQLite');
+  });
 });

@@ -78,6 +78,9 @@ export interface ExecutorMetadata {
   startedAt?: string;
   completedAt?: string;
   recovered?: boolean;
+  messageId?: string;
+  lastEventAt?: string;
+  remoteStatus?: 'busy' | 'idle' | 'retry' | 'error';
 }
 
 export interface ExecutorFailure {

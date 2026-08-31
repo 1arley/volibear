@@ -33,6 +33,8 @@ export interface OrchestratorOptions {
   permissionGuard?: PermissionGuard;
   /** Called after each stage for progress reporting */
   onStage?: (stageId: string, run: Run) => void;
+  /** Receives live executor output chunks. */
+  onOutput?: (chunk: string) => void;
 }
 
 /**
@@ -66,6 +68,7 @@ export class RunOrchestrator {
       permissionGuard: opts.permissionGuard,
       cwd: opts.cwd,
       runDir: opts.artifacts.dir,
+      onOutput: opts.onOutput,
       config: opts.config,
     };
   }

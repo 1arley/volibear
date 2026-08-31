@@ -23,6 +23,7 @@ Options:
   --router <name>             Select routing layer (native, 9router)
   --pipeline <name>           Select pipeline
   --accept-defaults           Delegate blocking decisions automatically (non-interactive)
+  --answer <text>             Answer the next pending blocking decision while resuming
   --force                     Overwrite existing install files / retry a BLOCKED run (resume)
   --allow-mock                Allow mock executor (for testing/CI — skips mock guard)
   --project                   Install into the current project
@@ -49,6 +50,7 @@ export interface CliOptions {
   both?: boolean;
   verbose?: boolean;
   acceptDefaults?: boolean;
+  answer?: string;
   force?: boolean;
   allowMock?: boolean;
 }
@@ -94,6 +96,17 @@ export function parseArgs(args: string[]): ParsedArgs {
         if (arg === '--executor') options.executor = value;
         if (arg === '--router') options.router = value;
         if (arg === '--pipeline') options.pipeline = value;
+        break;
+      }
+      case '--answer': {
+        const value = args[i + 1];
+        if (value === undefined || value.startsWith('--')) {
+          errors.push(`${arg} requires a value`);
+          i++;
+          break;
+        }
+        options.answer = value;
+        i++;
         break;
       }
       case '--project':
