@@ -51,6 +51,9 @@ jobs:
       - name: Typecheck
         run: pnpm exec tsc -b
 
+      - name: Bundle
+        run: pnpm bundle
+
       - name: Unit tests
         run: pnpm test
 
