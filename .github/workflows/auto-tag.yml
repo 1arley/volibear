@@ -1,0 +1,51 @@
+name: Auto-tag
+
+# Bumps the patch version and tags every push to main that is not already a
+# release commit. GITHUB_TOKEN pushes cannot trigger other workflows, so the
+# release workflow is dispatched explicitly after the tag lands.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    # The version commit pushed by this job must not bump again.
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Skip release commits (HEAD already tagged)
+        id: tagged
+        run: |
+          if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump patch version and push the tag
+        if: steps.tagged.outputs.skip == 'false'
+        run: |
+          git pull --rebase origin main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version patch -m "chore: v%s"
+          git push --follow-tags
+
+      - name: Trigger the release workflow
+        if: steps.tagged.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml -f dry_run=false -f tag="v$(node -p "require('./package.json').version")"
