@@ -18,7 +18,7 @@ You receive:
 
 ## Output (Required)
 
-Write these files to the run directory:
+Return one JSON object as the final response. Volibear validates and persists it as `review.json`.
 
 ### review.json
 ```json
@@ -49,3 +49,4 @@ Write these files to the run directory:
 - Severity classification: critical (broken), high (significant risk), medium (should fix), low (minor), info (suggestion)
 - approved=true means no findings at critical or high severity
 - approved=false means at least one critical or high finding exists
+- Do not invoke other agents or implement pipeline stages

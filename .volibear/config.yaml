@@ -1,0 +1,28 @@
+# Volibear project configuration
+version: 1
+pipeline: feature
+executor: opencode
+router:
+  mode: native
+agents:
+  rubberduck:
+    executor: opencode
+  architect:
+    executor: opencode
+  developer:
+    executor: opencode
+  reviewer:
+    executor: opencode
+  fixer:
+    executor: opencode
+  verifier:
+    executor: opencode
+verification:
+  # Add the deterministic project checks that gate a PASS, e.g.:
+  # commands:
+  #   - npm test
+  #   - npm run typecheck
+  commands: []
+repair:
+  max_cycles: 3
+  reject_on: [critical, high]

@@ -169,15 +169,13 @@ export class MockExecutor implements Executor {
   }
 
   private verifier(ctx: ExecutorContext): ExecutorResult {
-    writeJson(ctx.runDir, 'verification.json', {
-      commands: [],
-      passed: true,
-      summary: 'Mock verification passed',
-    });
     return {
       exitCode: 0,
-      stdout: '[mock] verifier passed',
+      stdout: '[mock] verifier summarized deterministic results',
       stderr: '',
+      structured: {
+        summary: 'Mock verifier report; deterministic result was not modified',
+      },
     };
   }
 }

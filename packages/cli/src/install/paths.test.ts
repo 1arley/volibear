@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   volibearTargetDir,
   integrationAgentPath,
+  integrationAgentPaths,
   displayPath,
 } from './paths.js';
 
@@ -14,6 +15,15 @@ describe('volibearTargetDir', () => {
 
   it('resolves global runtime dir under home', () => {
     expect(volibearTargetDir('global', context)).toBe('/home/alice/.volibear');
+  });
+});
+
+describe('integrationAgentPaths', () => {
+  it('returns bridge plus six role agents for OpenCode', () => {
+    const paths = integrationAgentPaths('opencode', 'project', context);
+    expect(paths).toHaveLength(7);
+    expect(paths[0]).toBe('/work/repo/.opencode/agents/volibear.md');
+    expect(paths).toContain('/work/repo/.opencode/agents/volibear-developer.md');
   });
 });
 

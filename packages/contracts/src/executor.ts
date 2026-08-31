@@ -43,6 +43,16 @@ export interface ExecutorContext {
   findingsFile?: string;
   /** Accumulated outputs from previous pipeline stages */
   pipelineContext?: Record<string, unknown>;
+  /** Stage-specific context assembled and persisted by Volibear. */
+  handoff?: import('./execution.js').StageHandoff;
+  /** Stable persisted execution attempt id. */
+  executionId?: string;
+  /** Previously persisted session to reconcile after a lost local response. */
+  resumeSessionId?: string;
+  /** Cooperative cancellation for SDK-based executors. */
+  abortSignal?: AbortSignal;
+  /** Persist transport metadata as soon as it becomes available. */
+  onMetadata?: (metadata: ExecutorMetadata) => void | Promise<void>;
   /** Callback for streaming output */
   onOutput?: (chunk: string) => void;
 }
@@ -56,6 +66,26 @@ export interface ExecutorResult {
   stderr: string;
   /** Structured output when the executor supports it */
   structured?: Record<string, unknown>;
+  metadata?: ExecutorMetadata;
+  failure?: ExecutorFailure;
+}
+
+export interface ExecutorMetadata {
+  transport: 'cli' | 'opencode-sdk' | 'mock';
+  sessionId?: string;
+  remoteAgent?: string;
+  serverUrl?: string;
+  startedAt?: string;
+  completedAt?: string;
+  recovered?: boolean;
+}
+
+export interface ExecutorFailure {
+  code: 'NOT_AVAILABLE' | 'CONNECTION_FAILED' | 'AGENT_NOT_FOUND' | 'SESSION_LOST' |
+    'TIMEOUT' | 'CANCELLED' | 'REMOTE_ERROR' | 'INVALID_OUTPUT';
+  message: string;
+  retryable: boolean;
+  ambiguousSideEffects?: boolean;
 }
 
 /**
@@ -71,4 +101,6 @@ export interface Executor {
   runAgent(ctx: ExecutorContext): Promise<ExecutorResult>;
   /** Run a plain shell command */
   runCommand?(ctx: ExecutorContext): Promise<ExecutorResult>;
+  /** Release executor-owned resources (never external services). */
+  close?(): Promise<void>;
 }

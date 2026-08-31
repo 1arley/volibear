@@ -89,6 +89,9 @@ importers:
 
   packages/executors:
     dependencies:
+      '@opencode-ai/sdk':
+        specifier: 1.18.25
+        version: 1.18.25
       '@volibear/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -496,6 +499,9 @@ packages:
     engines: {node: ^22.20 || ^24.12 || >=25}
     cpu: [x64]
     os: [linux]
+
+  '@opencode-ai/sdk@1.18.25':
+    resolution: {integrity: sha512-GwgwhW+vE8FWSDw730SjzqNhsWXB0uJjbFOiqFkmM+USFuG13HuTlGe6SR2ixt+WXxoD6FV1hILWqsXyqej9hQ==}
 
   '@rollup/rollup-android-arm-eabi@4.63.1':
     resolution: {integrity: sha512-UZ8sUxPTiHWYX9QNdJedb1kDZSpS1t/VPWBWGSgqHNi9w3Cu6IXvu2mzbhiTiPvtrqgTQJ+zqiAq2iPIPilpaQ==}
@@ -1449,6 +1455,10 @@ snapshots:
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
+
+  '@opencode-ai/sdk@1.18.25':
+    dependencies:
+      cross-spawn: 7.0.6
 
   '@rollup/rollup-android-arm-eabi@4.63.1':
     optional: true

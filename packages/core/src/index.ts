@@ -4,3 +4,4 @@ export * from './events.js';
 export * from './artifacts.js';
 export * from './state.js';
 export * from './errors.js';
+export * from './executions.js';

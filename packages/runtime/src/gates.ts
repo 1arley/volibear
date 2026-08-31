@@ -210,6 +210,20 @@ export class ImplementationProducedGate implements Gate {
   }
 }
 
+export class VerificationPassedGate implements Gate {
+  readonly id = 'verification-passed';
+  readonly description = 'Deterministic verification commands must pass';
+
+  evaluate(params: GateParams): GateResult {
+    if (!params.verification) {
+      return { passed: false, gate: this.id, reason: 'verification artifact missing' };
+    }
+    return params.verification.passed
+      ? { passed: true, gate: this.id, reason: 'deterministic verification passed' }
+      : { passed: false, gate: this.id, reason: params.verification.summary ?? 'deterministic verification failed' };
+  }
+}
+
 /**
  * Gate registry — maps gate IDs to gate instances.
  */
@@ -223,6 +237,7 @@ export class GateRegistry {
     this.register(new RepairCyclesWithinLimitGate());
     this.register(new ArtifactsExistGate());
     this.register(new ImplementationProducedGate());
+    this.register(new VerificationPassedGate());
   }
 
   register(gate: Gate): void {

@@ -33,6 +33,7 @@ export class CodexExecutor extends CliExecutor {
   }
 
   protected buildArgs(_ctx: ExecutorContext): string[] {
-    return ['exec'];
+    // --skip-git-repo-check lets codex run outside a git repository.
+    return ['exec', '--skip-git-repo-check'];
   }
 }

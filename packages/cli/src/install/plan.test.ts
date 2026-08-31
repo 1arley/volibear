@@ -46,9 +46,12 @@ describe('createInstallPlan', () => {
     };
     const plan = createInstallPlan(sel, context, fakeDeps());
     const bridges = plan.files.filter((f) => f.kind === 'integration-agent');
-    expect(bridges).toHaveLength(1);
+    expect(bridges).toHaveLength(7);
     expect(bridges[0].path).toMatch(/\.opencode\/agents\/volibear\.md$/);
-    expect(bridges[0].action).toBe('create');
+    expect(bridges.every((file) => file.action === 'create')).toBe(true);
+    expect(bridges.slice(1).every((file) => file.content?.includes('mode: subagent'))).toBe(true);
+    expect(bridges.slice(1).every((file) => file.content?.includes('model: 9router/build'))).toBe(true);
+    expect(bridges.slice(1).every((file) => file.content?.includes('task: deny'))).toBe(true);
   });
 
   it('marks existing bridge files as keep when force is false', () => {
@@ -134,7 +137,7 @@ describe('createInstallPlan', () => {
     expect(plan.warnings.some((w) => w.includes('no coding CLI integrations'))).toBe(true);
   });
 
-  it('never includes agent files other than volibear.md/toml for integrations', () => {
+  it('installs role agents only for OpenCode while other integrations keep bridge-only behavior', () => {
     const sel: InstallSelection = {
       scope: 'project',
       integrations: ['opencode', 'claude', 'codex'],
@@ -145,10 +148,9 @@ describe('createInstallPlan', () => {
     };
     const plan = createInstallPlan(sel, context, fakeDeps());
     const bridges = plan.files.filter((f) => f.kind === 'integration-agent');
-    // Only the volibear bridge files
-    for (const b of bridges) {
-      expect(b.path).toMatch(/volibear\.(md|toml)$/);
-    }
+    expect(bridges.filter((b) => b.integration === 'opencode')).toHaveLength(7);
+    expect(bridges.filter((b) => b.integration === 'claude')).toHaveLength(1);
+    expect(bridges.filter((b) => b.integration === 'codex')).toHaveLength(1);
   });
 
   it('global scope uses home directory', () => {

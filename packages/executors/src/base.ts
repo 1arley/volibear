@@ -82,16 +82,28 @@ export abstract class CliExecutor implements Executor {
     }
 
     const args = this.buildArgs(ctx);
-    const prompt = buildAgentPrompt(ctx);
-    const env = { ...process.env, ...this.env(ctx) };
+    return this.spawnAgent(this.binary, args, ctx, { ...process.env, ...this.env(ctx) });
+  }
 
-    // Use async spawn with a hard timeout. spawnSync would block the entire
-    // event loop, hiding the timeout from the rest of the runtime.
+  /**
+   * Spawn the CLI binary and collect stdout/stderr with a hard timeout.
+   *
+   * Shared by `runAgent` and by subclasses that retry an invocation with a
+   * different argument shape (e.g. a legacy-flag fallback). Using async spawn
+   * (not spawnSync) keeps the timeout from blocking the event loop.
+   */
+  protected spawnAgent(
+    binary: string,
+    args: string[],
+    ctx: ExecutorContext,
+    env: Record<string, string | undefined>,
+  ): Promise<ExecutorResult> {
+    const prompt = buildAgentPrompt(ctx);
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
       let killed = false;
-      const child = spawn(this.binary, args, {
+      const child = spawn(binary, args, {
         cwd: ctx.cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],

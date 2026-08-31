@@ -6,7 +6,7 @@ import {
   Run,
   RunState,
 } from '@volibear/contracts';
-import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
+import { EventLog, ArtifactStore, RunStore, StageExecutionStore } from '@volibear/core';
 import { GateRegistry } from './gates.js';
 import { runStage, RuntimeServices } from './stage-runner.js';
 import { PermissionGuard } from './permission-guard.js';
@@ -62,6 +62,7 @@ export class RunOrchestrator {
       artifacts: opts.artifacts,
       gates: this.gates,
       runStore: opts.runStore,
+      executions: new StageExecutionStore(opts.artifacts.dir),
       permissionGuard: opts.permissionGuard,
       cwd: opts.cwd,
       runDir: opts.artifacts.dir,

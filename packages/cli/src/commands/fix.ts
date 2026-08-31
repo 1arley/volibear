@@ -116,5 +116,7 @@ export async function runFix(positional: string[], options: CliOptions): Promise
     app.runStore.update(runId, { state: 'FAIL', error: message });
     console.error(`\n✗ Pipeline failed: ${message}`);
     return 1;
+  } finally {
+    await app.close();
   }
 }

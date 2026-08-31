@@ -36,6 +36,11 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node20',
+  // @opencode-ai/sdk uses cross-spawn (CommonJS). The publish artifact is ESM,
+  // so provide Node's standard interop require for bundled CJS dependencies.
+  banner: {
+    js: `import { createRequire as __volibearCreateRequire } from 'node:module'; const require = __volibearCreateRequire(import.meta.url);`,
+  },
   // Workspace packages are source-only; alias them straight to their entry so
   // the bundle does not depend on a prior per-package build.
   alias: {
@@ -52,10 +57,16 @@ await build({
 });
 
 mkdirSync(join(root, 'resources'), { recursive: true });
+// agents/*.md is canonical. Refresh the package-local development resources
+// before copying publish resources so the two targets can never drift.
+cpSync(join(root, 'agents'), join(cliPkg, 'resources', 'agents'), {
+  recursive: true,
+  force: true,
+});
 cpSync(join(cliPkg, 'resources', 'pipelines'), join(root, 'resources', 'pipelines'), {
   recursive: true,
 });
-cpSync(join(cliPkg, 'resources', 'agents'), join(root, 'resources', 'agents'), {
+cpSync(join(root, 'agents'), join(root, 'resources', 'agents'), {
   recursive: true,
 });
 cpSync(join(cliPkg, 'resources', 'install'), join(root, 'resources', 'install'), {

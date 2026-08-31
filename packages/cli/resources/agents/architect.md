@@ -17,29 +17,8 @@ You receive:
 
 ## Output (Required)
 
-Write these files to the run directory:
+Return one JSON object as the final response. Volibear validates and persists it as `architecture.json`.
 
-### architecture.md
-```markdown
-# Architecture: <task summary>
-
-## Approach
-<High-level description of the solution>
-
-## Files to Create
-- path/to/file.ts (reason)
-
-## Files to Modify
-- path/to/file.ts (reason)
-
-## Risks
-<list any technical risks>
-
-## Acceptance Criteria
-<testable criteria that must be met>
-```
-
-### architecture.json
 ```json
 {
   "version": 1,
@@ -53,20 +32,6 @@ Write these files to the run directory:
 }
 ```
 
-### acceptance.json
-```json
-{
-  "version": 1,
-  "criteria": [
-    {
-      "id": "AC1",
-      "description": "<testable criterion>",
-      "verification_method": "test|lint|manual"
-    }
-  ]
-}
-```
-
 ## Behavior
 
 - Read requirements.json before designing
@@ -74,3 +39,4 @@ Write these files to the run directory:
 - Do not modify source code
 - Keep the architecture simple and implementable
 - Prefer incremental changes over large rewrites
+- Do not invoke other agents or implement pipeline stages

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "requirements_version": 1,
+  "summary": "Add a simple exported hello world function to the core package that returns 'Hello, World!'",
+  "files_to_create": ["packages/core/src/greeting.ts"],
+  "files_to_modify": ["packages/core/src/index.ts"],
+  "approach": "Create a new greeting.ts module in the core package with a typed exported function, then re-export it through the package's index.ts to make it available to consumers.",
+  "risks": [],
+  "acceptance_criteria": [
+    "Function returns 'Hello, World!' string",
+    "Function has explicit TypeScript return type annotation",
+    "Function is exported from @volibear/core package",
+    "Function has no side effects",
+    "Code passes tsc strict mode",
+    "Code passes ESLint",
+    "Function is importable by other packages"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "criteria": [
+    {
+      "id": "AC1",
+      "description": "getHelloWorld function returns the exact string 'Hello, World!'",
+      "verification_method": "test"
+    },
+    {
+      "id": "AC2",
+      "description": "Function has explicit TypeScript return type annotation of string",
+      "verification_method": "lint"
+    },
+    {
+      "id": "AC3",
+      "description": "Function is exported from @volibear/core package index",
+      "verification_method": "lint"
+    },
+    {
+      "id": "AC4",
+      "description": "Function performs no side effects (no console output, file I/O, or network calls)",
+      "verification_method": "manual"
+    },
+    {
+      "id": "AC5",
+      "description": "TypeScript compiles without errors in strict mode",
+      "verification_method": "lint"
+    },
+    {
+      "id": "AC6",
+      "description": "ESLint reports no errors or warnings",
+      "verification_method": "lint"
+    }
+  ]
+}

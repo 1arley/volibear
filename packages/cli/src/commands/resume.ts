@@ -103,5 +103,7 @@ export async function runResume(_positional: string[], options: CliOptions): Pro
     app.runStore.update(target.id, { state: 'FAIL', error: message });
     console.error(`\n✗ Resume failed: ${message}`);
     return 1;
+  } finally {
+    await app.close();
   }
 }

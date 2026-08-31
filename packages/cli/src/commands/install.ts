@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { CliOptions } from '../cli.js';
 import { bundledPipelinesDir, bundledAgentsDir } from '../app.js';
 import { getHomeDir, displayPath } from '../install/paths.js';
-import { readIntegrationTemplate } from '../install/templates.js';
+import { readIntegrationTemplate, renderOpenCodeRoleAgent, type OpenCodeRole } from '../install/templates.js';
 import { createInstallPlan } from '../install/plan.js';
 import { applyInstallPlan, realFS } from '../install/apply.js';
 import { runInstallWizard } from '../install/wizard.js';
@@ -105,7 +105,7 @@ export function selectionFromFlags(
   // Executor.
   const executor: InstallExecutor = options.executor
     ? (options.executor as InstallExecutor)
-    : 'mock';
+    : integrations.includes('opencode') ? 'opencode' : 'mock';
   if (!KNOWN_EXECUTORS.includes(executor as (typeof KNOWN_EXECUTORS)[number])) {
     return { ok: false, message: `Unknown executor "${executor}". Available: ${KNOWN_EXECUTORS.join(', ')}.` };
   }
@@ -238,7 +238,14 @@ async function runNonInteractive(
         // Config files always carry content in the plan; bridge files keep
         // content undefined while 'keep', so re-read the template here.
         if (file.integration) {
-          file.content = deps.readTemplate(file.integration);
+          const roleMatch = file.path.match(/volibear-(rubberduck|architect|developer|reviewer|fixer|verifier)\.md$/);
+          if (file.integration === 'opencode' && roleMatch) {
+            const role = roleMatch[1] as OpenCodeRole;
+            const body = deps.readBundledAgent(`${role}.md`);
+            file.content = body === undefined ? undefined : renderOpenCodeRoleAgent(role, body);
+          } else {
+            file.content = deps.readTemplate(file.integration);
+          }
         }
       }
     }

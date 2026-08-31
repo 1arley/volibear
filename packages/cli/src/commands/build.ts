@@ -79,5 +79,7 @@ export async function runBuild(positional: string[], options: CliOptions): Promi
     app.runStore.update(runId, { state: 'FAIL', error: message });
     console.error(`\n✗ Pipeline failed: ${message}`);
     return 1;
+  } finally {
+    await app.close();
   }
 }

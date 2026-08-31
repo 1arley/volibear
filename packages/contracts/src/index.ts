@@ -9,3 +9,4 @@ export * from './gates.js';
 export * from './findings.js';
 export * from './executor.js';
 export * from './rubberduck.js';
+export * from './execution.js';

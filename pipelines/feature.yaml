@@ -35,6 +35,16 @@ stages:
         agent: reviewer
         description: Review the implementation and produce findings
 
-  - id: verifier
+  - id: verification
     type: verify
     description: Run deterministic project checks
+
+  - id: verifier
+    type: agent
+    agent: verifier
+    description: Synthesize deterministic verification results
+
+  - id: verification-gate
+    type: gate
+    gate: verification-passed
+    description: Deterministic commands are the final PASS authority

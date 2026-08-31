@@ -8,6 +8,7 @@ import {
   ensureConfigDirs,
   EventLog,
   ArtifactStore,
+  StageExecutionStore,
   RunStore,
 } from '@volibear/core';
 import {
@@ -21,6 +22,7 @@ import {
 import { PipelineParser, validatePipelineAgents, RunOrchestrator, PermissionGuard } from '@volibear/runtime';
 import { ExecutorRegistry, MockRubberduckDriver, CliRubberduckDriver } from '@volibear/executors';
 import { CliOptions } from './cli.js';
+import { createHash } from 'node:crypto';
 
 /**
  * Resolve the CLI's bundled pipelines directory (resources/pipelines).
@@ -203,12 +205,68 @@ export class App {
       return new MockRubberduckDriver();
     }
 
+    const executionStore = _runId ? new StageExecutionStore(this.runStore.runDir(_runId)) : undefined;
+    const executionRecords = new Map<string, string>();
     return new CliRubberduckDriver(executor, {
       cwd: this.cwd,
       runDir: _runId ? this.runStore.runDir(_runId) : this.cwd,
       model: rubberduckAgent?.model,
       router: rubberduckAgent?.router,
       instructions: rubberduckAgent?.instructions,
+      execution: _runId && executionStore ? {
+        prepare: (operation, prompt) => {
+          const executionId = `rubberduck-${operation}-attempt-1`;
+          executionRecords.set(operation, executionId);
+          const handoff = {
+            schema_version: 1 as const,
+            run_id: _runId,
+            pipeline: { name: this.config.pipeline, version: 1 },
+            stage: { id: 'rubberduck', role: 'rubberduck', cycle: 0, attempt: 1 },
+            task: prompt,
+            inputs: {},
+            constraints: ['Do not invoke other agents or reconstruct the pipeline.'],
+          };
+          const existing = executionStore.load(executionId);
+          if (!existing) executionStore.create({
+            schema_version: 1,
+            execution_id: executionId,
+            run_id: _runId,
+            stage_id: 'rubberduck',
+            role: 'rubberduck',
+            cycle: 0,
+            attempt: 1,
+            handoff_hash: createHash('sha256').update(JSON.stringify(handoff)).digest('hex'),
+            status: 'prepared',
+            executor: executorId,
+          }, handoff);
+          return {
+            executionId,
+            resumeSessionId: existing?.session_id,
+            handoff,
+            onMetadata: (metadata) => {
+              executionStore.update(executionId, {
+                status: 'session_created',
+                session_id: metadata.sessionId,
+                remote_agent: metadata.remoteAgent,
+                server_url: metadata.serverUrl,
+                started_at: metadata.startedAt,
+              });
+            },
+          };
+        },
+        complete: (operation, result) => {
+          const executionId = executionRecords.get(operation);
+          if (!executionId) return;
+          executionStore.writeRawOutput(executionId, result.stdout);
+          if (result.structured) executionStore.writeStructuredOutput(executionId, result.structured);
+          executionStore.update(executionId, {
+            status: result.exitCode === 0 ? 'completed' : result.failure?.code === 'TIMEOUT' ? 'timed_out' : 'failed',
+            completed_at: new Date().toISOString(),
+            exit_code: result.exitCode,
+            error: result.exitCode === 0 ? undefined : result.failure?.message ?? result.stderr,
+          });
+        },
+      } : undefined,
     });
   }
 
@@ -268,5 +326,10 @@ export class App {
       findings: options.findings,
       onStage: options.onStage,
     });
+  }
+
+  /** Release executor-owned resources such as a Volibear-started OpenCode server. */
+  async close(): Promise<void> {
+    await Promise.all(this.executors.list().map((executor) => executor.close?.()));
   }
 }

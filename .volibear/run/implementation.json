@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "files_changed": [
+    "packages/core/src/hello-world.ts"
+  ],
+  "files_created": [],
+  "files_deleted": [],
+  "summary": "Added JSDoc comment to helloWorld() public export (review finding F002). Verified: 158 tests pass, typecheck clean, lint clean."
+}

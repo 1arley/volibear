@@ -1,22 +1,28 @@
 import { spawn } from 'node:child_process';
 import {
   AgentDefinition,
+  AgentId,
   Executor,
   ExecutorContext,
   Pipeline,
   RubberduckInteraction,
   Stage,
+  ArchitectureSchema,
+  ImplementationSchema,
+  ReviewSchema,
 } from '@volibear/contracts';
-import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
+import { EventLog, ArtifactStore, RunStore, StageExecutionStore } from '@volibear/core';
 import { GateRegistry, GateParams } from './gates.js';
 import { runRubberduck, RubberduckDriver } from './rubberduck.js';
 import { PermissionGuard } from './permission-guard.js';
+import { buildStageHandoff, handoffHash } from './handoffs.js';
 
 export interface RuntimeServices {
   events: EventLog;
   artifacts: ArtifactStore;
   gates: GateRegistry;
   runStore: RunStore;
+  executions: StageExecutionStore;
   permissionGuard?: PermissionGuard;
   cwd: string;
   runDir: string;
@@ -81,6 +87,9 @@ export async function runStage(
         { gate: stage.gate, reason: result.reason },
       );
       if (!result.passed) {
+        if (stage.gate === 'verification-passed') {
+          return { kind: 'fail', error: result.reason };
+        }
         return { kind: 'gate-blocked', gate: stage.gate, reason: result.reason };
       }
       return { kind: 'continue' };
@@ -143,7 +152,35 @@ async function runAgentStage(
     executor: agent.executor,
   });
 
-     const ec: ExecutorContext = {
+  const attempt = 1;
+  const executionId = `${stage.id}-cycle-${ctx.repairCycle}-${stage.agent}-attempt-${attempt}`;
+  const handoff = buildStageHandoff({
+    runId: ctx.runId,
+    pipeline: ctx.pipeline,
+    stageId: stage.id,
+    role: stage.agent as AgentId,
+    cycle: ctx.repairCycle,
+    attempt,
+    task: ctx.task,
+    artifacts: ctx.services.artifacts,
+    verificationCommands: ctx.services.config.verification.commands,
+  });
+  const existingExecution = ctx.services.executions.load(executionId);
+  if (existingExecution?.status === 'completed') return { kind: 'continue' };
+  if (!existingExecution) ctx.services.executions.create({
+    schema_version: 1,
+    execution_id: executionId,
+    run_id: ctx.runId,
+    stage_id: stage.id,
+    role: stage.agent as AgentId,
+    cycle: ctx.repairCycle,
+    attempt,
+    handoff_hash: handoffHash(handoff),
+    status: 'prepared',
+    executor: agent.executor,
+  }, handoff);
+
+  const ec: ExecutorContext = {
     cwd: ctx.services.cwd,
     runDir: ctx.services.runDir,
     task: ctx.task,
@@ -155,6 +192,18 @@ async function runAgentStage(
     findingsFile: ctx.findingsFile,
     context: buildFindingsContext(ctx.findings),
     pipelineContext: ctx.pipelineContext,
+    handoff,
+    executionId,
+    resumeSessionId: existingExecution?.session_id,
+    onMetadata: (metadata) => {
+      ctx.services.executions.update(executionId, {
+        status: 'session_created',
+        session_id: metadata.sessionId,
+        remote_agent: metadata.remoteAgent,
+        server_url: metadata.serverUrl,
+        started_at: metadata.startedAt,
+      });
+    },
   };
 
   try {
@@ -175,20 +224,46 @@ async function runAgentStage(
     } else {
       result = await executor.runAgent(ec);
     }
+    ctx.services.executions.writeRawOutput(executionId, result.stdout);
+    if (result.structured) ctx.services.executions.writeStructuredOutput(executionId, result.structured);
     events.record('stage.completed', ctx.runId, {
       stage: stage.id,
       agent: stage.agent,
       exitCode: result.exitCode,
     });
     if (result.exitCode !== 0) {
-      return { kind: 'fail', error: `agent "${stage.agent}" exited with ${result.exitCode}` };
+      ctx.services.executions.update(executionId, {
+        status: result.failure?.code === 'TIMEOUT' ? 'timed_out' : result.failure?.code === 'CANCELLED' ? 'cancelled' : 'failed',
+        exit_code: result.exitCode,
+        completed_at: new Date().toISOString(),
+        error: result.failure?.message ?? result.stderr,
+      });
+      if (result.failure?.ambiguousSideEffects) {
+        return { kind: 'gate-blocked', gate: 'ambiguous-agent-effects', reason: result.failure.message };
+      }
+      return { kind: 'fail', error: `agent "${stage.agent}" exited with ${result.exitCode}: ${result.failure?.message ?? result.stderr}` };
     }
+    persistAgentArtifact(stage.agent as AgentId, result.structured, ctx.services.artifacts);
+    ctx.services.executions.update(executionId, {
+      status: 'completed', exit_code: 0, completed_at: new Date().toISOString(),
+    });
     return { kind: 'continue' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     events.record('stage.failed', ctx.runId, { stage: stage.id, error: message });
+    ctx.services.executions.update(executionId, {
+      status: 'failed', completed_at: new Date().toISOString(), error: message,
+    });
     return { kind: 'fail', error: message };
   }
+}
+
+function persistAgentArtifact(role: AgentId, structured: Record<string, unknown> | undefined, artifacts: ArtifactStore): void {
+  if (!structured || Object.keys(structured).length === 1 && typeof structured.output === 'string') return;
+  if (role === 'architect') artifacts.write('architecture', ArchitectureSchema.parse(structured));
+  if (role === 'developer' || role === 'fixer') artifacts.write('implementation', ImplementationSchema.parse(structured));
+  if (role === 'reviewer') artifacts.write('review', ReviewSchema.parse(structured));
+  if (role === 'verifier') artifacts.writeRaw('verifier-report.json', JSON.stringify(structured, null, 2));
 }
 
 // ── Command stage ──────────────────────────────────────
@@ -275,14 +350,8 @@ async function runVerifyStage(ctx: StageRunContext): Promise<StageOutcome> {
   artifacts.write('verification', verification);
   events.record('verification.completed', ctx.runId, { status: allPassed ? 'pass' : 'fail' });
 
-  if (!allPassed) {
-    const first = results.find((r) => !r.passed)!;
-    const detail = [first.stdout, first.stderr].filter(Boolean).join('\n').trim();
-    return {
-      kind: 'fail',
-      error: `verification failed: ${failedCommands.join(', ')}${detail ? `\n${truncate(detail, 1200)}` : ''}`,
-    };
-  }
+  // The following verifier agent must always receive the deterministic result,
+  // including failures. A later deterministic gate remains the PASS authority.
   return { kind: 'continue' };
 }
 

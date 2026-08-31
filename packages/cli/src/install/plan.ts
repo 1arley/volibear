@@ -6,6 +6,7 @@ import type {
 } from './types.js';
 import type { InstallPathContext } from './paths.js';
 import { volibearTargetDir, integrationAgentPath } from './paths.js';
+import { renderOpenCodeRoleAgent, type OpenCodeRole } from './templates.js';
 
 /** All Volibear role instruction files installed into .volibear/agents/. */
 export const AGENT_INSTRUCTION_FILES = [
@@ -137,6 +138,29 @@ export function createInstallPlan(
         integration,
         scope,
       });
+
+      if (integration === 'opencode') {
+        const agentDir = resolve(path, '..');
+        for (const instructionFile of AGENT_INSTRUCTION_FILES) {
+          const role = instructionFile.replace(/\.md$/, '') as OpenCodeRole;
+          const agentPath = resolve(agentDir, `volibear-${role}.md`);
+          const agentExists = deps.exists(agentPath);
+          const action = agentExists ? (selection.force ? 'overwrite' : 'keep') : 'create';
+          const body = deps.readBundledAgent(instructionFile);
+          if (body === undefined) {
+            warnings.push(`agent instructions "${instructionFile}" not found in bundled resources; skipped`);
+            continue;
+          }
+          files.push({
+            kind: 'integration-agent',
+            path: agentPath,
+            action,
+            content: action === 'keep' ? undefined : renderOpenCodeRoleAgent(role, body),
+            integration,
+            scope,
+          });
+        }
+      }
     }
   }
 

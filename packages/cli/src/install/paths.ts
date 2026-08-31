@@ -51,6 +51,22 @@ export function integrationAgentPath(
   }
 }
 
+/** All native files installed for an integration (bridge plus role agents). */
+export function integrationAgentPaths(
+  integration: IntegrationId,
+  scope: 'project' | 'global',
+  context: InstallPathContext,
+): string[] {
+  const bridge = integrationAgentPath(integration, scope, context);
+  if (integration !== 'opencode') return [bridge];
+  const dir = resolve(bridge, '..');
+  return [
+    bridge,
+    ...['rubberduck', 'architect', 'developer', 'reviewer', 'fixer', 'verifier']
+      .map((role) => resolve(dir, `volibear-${role}.md`)),
+  ];
+}
+
 /** Short human-readable label for a path, replacing home with ~. */
 export function displayPath(path: string, homeDir: string): string {
   if (path === homeDir) return '~';
@@ -89,8 +105,9 @@ export function computeExistingPaths(
     if (exists(configPath)) configs.push(configPath);
 
     for (const id of integrations) {
-      const path = integrationAgentPath(id, s, context);
-      if (exists(path)) bridges.push(path);
+      for (const path of integrationAgentPaths(id, s, context)) {
+        if (exists(path)) bridges.push(path);
+      }
     }
   }
 
