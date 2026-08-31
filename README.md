@@ -6,12 +6,14 @@ Portable multi-agent engineering pipeline runtime.
 
 Volibear is a deterministic runtime that takes a software task or structured findings from another tool (e.g. ORNN), runs a controlled engineering workflow, and coordinates coding CLIs, models, agents, gates, and verification steps. It is not an agent itself — it is the orchestration layer that decides what runs, in which order, with which permissions.
 
-**Status:** MVP Phase 1 — runtime skeleton, Rubberduck interactive discovery, executor adapters, repair loops, pause/resume, and deterministic gates.
+**Status:** MVP Phase 1 — runtime skeleton, Rubberduck interactive discovery, executor adapters, repair loops, pause/resume, deterministic gates, and native coding-CLI bridge agents (OpenCode, Claude Code, Codex) with an interactive install wizard.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
 - [CLI Usage](#cli-usage)
+- [Coding CLI Integrations](#coding-cli-integrations)
+- [Install Modes](#install-modes)
 - [Architecture](#architecture)
 - [Agents](#agents)
 - [Executors](#executors)
@@ -24,8 +26,11 @@ Volibear is a deterministic runtime that takes a software task or structured fin
 ## Quick Start
 
 ```bash
-# Install the CLI
-npx volibearq@latest install --project
+# Interactive setup — detects OpenCode, Claude Code, and Codex on PATH
+npx volibearq@latest install
+
+# Non-interactive (CI / automation)
+npx volibearq@latest install --project opencode codex
 
 # Start a new feature pipeline
 npx volibearq@latest build "add Google authentication"
@@ -38,6 +43,15 @@ npx volibearq@latest resume
 
 # Check status
 npx volibearq@latest status
+```
+
+> The npm package is `volibearq`; the installed binaries are `volibearq` and `volibear`.
+> `npx volibear` resolves the package name, not the binary — always use `volibearq` with `npx`.
+
+## CLI Usage
+
+```text
+Usage: volibear <command> [options]
 ```
 
 > The npm package is `volibearq`; the installed binaries are `volibearq` and `volibear`.
@@ -63,9 +77,10 @@ Options:
   --router <name>             Select routing layer (native, 9router)
   --pipeline <name>           Select pipeline
   --accept-defaults           Delegate blocking decisions automatically (non-interactive)
-  --force                     Overwrite config (install) / retry a BLOCKED run (resume)
+  --force                     Overwrite existing install files / retry a BLOCKED run (resume)
   --project                   Install into the current project
   --global                    Install into ~/.volibear/
+  --both                      Install into both project and ~/.volibear/
   --help, -h                  Show help
   --version, -v               Show version
 ```
@@ -77,6 +92,66 @@ Options:
 | 0    | Pipeline completed with `PASS` |
 | 1    | Pipeline failed (`FAIL`) or an error occurred |
 | 2    | Pipeline is `BLOCKED`, `WAITING_FOR_USER`, or blocked on non-interactive input |
+
+## Coding CLI Integrations
+
+Volibear can appear as a `volibear` agent/entrypoint inside supported coding CLIs.
+The installed agent is a **bridge**: it does not replace or duplicate the CLI's
+native agents, and it does not implement work itself — it invokes the Volibear
+runtime (`volibear build <task>` / `volibear fix <findings>`) through the CLI's
+shell/task tool and reports the pipeline result (`PASS` / `FAIL` / `BLOCKED`).
+
+Supported integrations and their canonical bridge file:
+
+| CLI | Project path | Global path | Format |
+|-----|--------------|-------------|--------|
+| OpenCode | `.opencode/agents/volibear.md` | `~/.config/opencode/agents/volibear.md` | Markdown + YAML frontmatter (`mode: all`) |
+| Claude Code | `.claude/agents/volibear.md` | `~/.claude/agents/volibear.md` | Markdown + YAML frontmatter (`name: volibear`) |
+| Codex CLI | `.codex/agents/volibear.toml` | `~/.codex/agents/volibear.toml` | TOML (`developer_instructions`) |
+
+Notes:
+
+- The bridge inherits the model configured in the CLI session; no model is
+  hardcoded into the installed file.
+- Volibear never edits or deletes agent files other than its own
+  `volibear.md` / `volibear.toml` bridge file.
+- PATH detection is informational: installation works even if the CLI is not
+  installed yet (the bridge becomes useful once you install the CLI later).
+
+## Install Modes
+
+`volibear install` runs two ways:
+
+- **Interactive wizard** (stdin is a TTY and no install flags are given):
+  detects OpenCode / Claude Code / Codex on PATH, then guides you through
+  scope, integrations, pipelines, default executor, router, overwrite choices,
+  and a final confirmation summary. Navigation: `↑`/`↓` move, `Space` toggles
+  multi-select, `Enter` confirms, `Esc` goes back / cancels, `Ctrl+C` cancels.
+- **Non-interactive** (flags given, or stdin is not a TTY): safe for CI and
+  scripts.
+
+```bash
+# Project only
+volibear install --project
+volibear install --project opencode codex
+
+# Global only
+volibear install --global claude
+
+# Both project and global
+volibear install --both opencode claude
+
+# Legacy positional form
+volibear install opencode codex
+```
+
+- `--executor` sets the runtime's default executor (the CLI used *inside* the
+  pipeline), independent of which bridge agents are installed.
+- `--pipeline` selects a single pipeline in non-interactive mode (`feature` /
+  `fix`); the wizard allows multi-select.
+- **Overwrite protection:** existing `volibear` bridge files and an existing
+  `.volibear/config.yaml` are preserved by default. Use `--force` to overwrite
+  in non-interactive mode; the wizard asks you to choose per destination.
 
 ## Architecture
 

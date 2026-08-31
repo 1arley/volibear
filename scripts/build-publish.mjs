@@ -9,12 +9,13 @@
 // package and its runtime deps (zod, js-yaml) into a single ESM file, and by
 // copying the bundled pipeline resources next to it.
 //
-// Output layout (matches bundledPipelinesDir()/bundledAgentsDir() in
-// packages/cli/src/app.ts, which resolves <pkgRoot>/resources/{pipelines,agents}
-// from dist/index.js):
+// Output layout (matches bundledPipelinesDir()/bundledAgentsDir()/
+// bundledInstallDir() in packages/cli/src/app.ts, which resolves
+// <pkgRoot>/resources/{pipelines,agents,install} from dist/index.js):
 //   dist/index.js          bundled CLI entry (with shebang)
 //   resources/pipelines/*  default pipeline definitions
 //   resources/agents/*     default agent instruction files
+//   resources/install/*    native coding-CLI bridge templates
 
 import { build } from 'esbuild';
 import { cpSync, mkdirSync, rmSync, chmodSync, readdirSync, readFileSync } from 'node:fs';
@@ -57,11 +58,15 @@ cpSync(join(cliPkg, 'resources', 'pipelines'), join(root, 'resources', 'pipeline
 cpSync(join(cliPkg, 'resources', 'agents'), join(root, 'resources', 'agents'), {
   recursive: true,
 });
+cpSync(join(cliPkg, 'resources', 'install'), join(root, 'resources', 'install'), {
+  recursive: true,
+});
 
 chmodSync(join(root, 'dist', 'index.js'), 0o755);
 
 const bundled = readdirSync(join(root, 'resources', 'pipelines'));
 const agents = readdirSync(join(root, 'resources', 'agents'));
+const install = readdirSync(join(root, 'resources', 'install'));
 console.log(
-  `bundle ready: dist/index.js + resources/pipelines (${bundled.join(', ')}) + resources/agents (${agents.join(', ')})`,
+  `bundle ready: dist/index.js + resources/pipelines (${bundled.join(', ')}) + resources/agents (${agents.join(', ')}) + resources/install (${install.join(', ')})`,
 );

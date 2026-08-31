@@ -78,6 +78,7 @@ check('files allowlist ships the bundle and the resources', () => {
   assert(files.includes('dist/index.js'), 'files must include dist/index.js');
   assert(files.includes('resources/pipelines'), 'files must include resources/pipelines');
   assert(files.includes('resources/agents'), 'files must include resources/agents');
+  assert(files.includes('resources/install'), 'files must include resources/install');
 });
 check('no workspace protocol leaks into the published manifest', () => {
   const deps = { ...manifest.dependencies, ...manifest.optionalDependencies };
@@ -120,6 +121,14 @@ check('tarball contains bundled agent instructions', () => {
     'resources/agents/rubberduck.md missing — agent prompts would run without role instructions',
   );
 });
+check('tarball contains bundled CLI integration templates', () => {
+  for (const name of ['opencode.md', 'claude.md', 'codex.toml']) {
+    assert(
+      entries.includes(`resources/install/${name}`),
+      `resources/install/${name} missing — install would have no bridge template`,
+    );
+  }
+});
 check('tarball excludes workspace sources and node_modules', () => {
   const leaked = entries.filter((e) => e.startsWith('packages/') || e.startsWith('node_modules/'));
   assert(leaked.length === 0, `unexpected entries: ${leaked.slice(0, 3).join(', ')}`);
@@ -160,6 +169,14 @@ check(`${binName} install --project writes config and pipelines`, () => {
     existsSync(join(proj, '.volibear', 'pipelines', 'feature.yaml')),
     '.volibear/pipelines/feature.yaml missing — bundled resources not found at runtime',
   );
+});
+check(`${binName} install --project opencode writes the bridge agent`, () => {
+  cli(['install', '--project', 'opencode']);
+  const bridge = join(proj, '.opencode', 'agents', 'volibear.md');
+  assert(existsSync(bridge), 'bridge agent not created');
+  const content = readFileSync(bridge, 'utf-8');
+  assert(content.includes('volibear build'), 'bridge template lacks volibear build routing');
+  assert(!content.includes('model:'), 'bridge template must not hardcode a model');
 });
 check(`${binName} build runs the feature pipeline end to end`, () => {
   const out = cli(['build', 'add a health endpoint', '--accept-defaults']);

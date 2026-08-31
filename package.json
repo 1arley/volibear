@@ -12,6 +12,7 @@
     "dist/index.js",
     "resources/pipelines",
     "resources/agents",
+    "resources/install",
     "README.md"
   ],
   "repository": {

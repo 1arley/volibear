@@ -23,9 +23,10 @@ Options:
   --router <name>             Select routing layer (native, 9router)
   --pipeline <name>           Select pipeline
   --accept-defaults           Delegate blocking decisions automatically (non-interactive)
-  --force                     Overwrite existing config (install) / retry a BLOCKED run (resume)
+  --force                     Overwrite existing install files / retry a BLOCKED run (resume)
   --project                   Install into the current project
   --global                    Install into ~/.volibear/
+  --both                      Install into both project and ~/.volibear/
   --help, -h                  Show help
   --version, -v               Show version
 
@@ -44,6 +45,7 @@ export interface CliOptions {
   pipeline?: string;
   project?: boolean;
   global?: boolean;
+  both?: boolean;
   verbose?: boolean;
   acceptDefaults?: boolean;
   force?: boolean;
@@ -97,6 +99,9 @@ export function parseArgs(args: string[]): ParsedArgs {
         break;
       case '--global':
         options.global = true;
+        break;
+      case '--both':
+        options.both = true;
         break;
       case '--verbose':
         options.verbose = true;

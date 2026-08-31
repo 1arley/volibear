@@ -40,6 +40,16 @@ export function bundledAgentsDir(): string {
 }
 
 /**
+ * Resolve the CLI's bundled coding-CLI integration templates
+ * (resources/install — opencode.md, claude.md, codex.toml).
+ */
+export function bundledInstallDir(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  const packageDir = dirname(dirname(currentFile));
+  return join(packageDir, 'resources', 'install');
+}
+
+/**
  * Application wiring for CLI commands.
  * Resolves config, stores, agents, executors, and the pipeline.
  */
