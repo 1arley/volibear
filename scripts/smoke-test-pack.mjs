@@ -170,13 +170,19 @@ check(`${binName} install --project writes config and pipelines`, () => {
     '.volibear/pipelines/feature.yaml missing — bundled resources not found at runtime',
   );
 });
-check(`${binName} install --project opencode writes the bridge agent`, () => {
+check(`${binName} install --project opencode writes the native primary agent`, () => {
   cli(['install', '--project', 'opencode']);
-  const bridge = join(proj, '.opencode', 'agents', 'volibear.md');
-  assert(existsSync(bridge), 'bridge agent not created');
-  const content = readFileSync(bridge, 'utf-8');
-  assert(content.includes('volibear build'), 'bridge template lacks volibear build routing');
-  assert(!content.includes('model:'), 'bridge template must not hardcode a model');
+  const primary = join(proj, '.opencode', 'agents', 'volibear.md');
+  assert(existsSync(primary), 'primary agent not created');
+  const content = readFileSync(primary, 'utf-8');
+  assert(content.includes('mode: primary'), 'opencode template must declare mode: primary');
+  assert(!content.includes('volibear build'), 'native template must not route to the CLI bridge');
+  assert(!content.includes('model:'), 'opencode template must not hardcode a model');
+  const role = join(proj, '.opencode', 'agents', 'volibear-developer.md');
+  assert(existsSync(role), 'role agent not created');
+  const roleContent = readFileSync(role, 'utf-8');
+  assert(roleContent.includes('mode: subagent'), 'role agent must stay a subagent');
+  assert(roleContent.includes('task: deny'), 'role agent must deny recursive task delegation');
 });
 check(`${binName} build runs the feature pipeline end to end`, () => {
   const out = cli(['build', 'add a health endpoint', '--accept-defaults', '--allow-mock']);
