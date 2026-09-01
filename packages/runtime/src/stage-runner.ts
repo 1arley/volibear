@@ -26,6 +26,7 @@ export interface RuntimeServices {
   permissionGuard?: PermissionGuard;
   cwd: string;
   runDir: string;
+  nativeSessionId?: string;
   onOutput?: (chunk: string) => void;
   config: {
     repair: { max_cycles: number; reject_on: string[] };
@@ -195,19 +196,38 @@ async function runAgentStage(
     pipelineContext: ctx.pipelineContext,
     handoff,
     executionId,
-    resumeSessionId: existingExecution?.session_id,
+    resumeSessionId: agent.executor === 'opencode' && agent.router === 'native'
+      ? undefined
+      : existingExecution?.session_id,
+    nativeSessionId: agent.executor === 'opencode' && agent.router === 'native'
+      ? ctx.services.nativeSessionId
+      : undefined,
+    nativeRequestMessageId: existingExecution?.request_message_id ?? nativeRequestId(ctx.runId, executionId),
+    resumeChildSessionId: existingExecution?.child_session_id,
     onMetadata: (metadata) => {
       ctx.services.executions.update(executionId, {
         status: metadata.remoteStatus === 'busy' || metadata.remoteStatus === 'retry'
           ? 'running'
           : 'session_created',
         session_id: metadata.sessionId,
+        native_session_id: metadata.nativeSessionId,
+        request_message_id: metadata.requestMessageId,
+        child_session_id: metadata.childSessionId,
         remote_agent: metadata.remoteAgent,
         server_url: metadata.serverUrl,
         message_id: metadata.messageId,
         last_event_at: metadata.lastEventAt,
         remote_status: metadata.remoteStatus,
         started_at: metadata.startedAt,
+      });
+      if (metadata.nativeSessionId) events.record('opencode.subagent.updated', ctx.runId, {
+        stage: stage.id,
+        execution_id: executionId,
+        role: stage.agent,
+        primary_session_id: metadata.nativeSessionId,
+        child_session_id: metadata.childSessionId,
+        message_id: metadata.requestMessageId ?? metadata.messageId,
+        status: metadata.remoteStatus ?? 'prepared',
       });
     },
     onOutput: ctx.services.onOutput,
@@ -232,12 +252,6 @@ async function runAgentStage(
       result = await executor.runAgent(ec);
     }
     ctx.services.executions.writeRawOutput(executionId, result.stdout);
-    if (result.structured) ctx.services.executions.writeStructuredOutput(executionId, result.structured);
-    events.record('stage.completed', ctx.runId, {
-      stage: stage.id,
-      agent: stage.agent,
-      exitCode: result.exitCode,
-    });
     if (result.exitCode !== 0) {
       ctx.services.executions.update(executionId, {
         status: result.failure?.code === 'TIMEOUT' ? 'timed_out' : result.failure?.code === 'CANCELLED' ? 'cancelled' : 'failed',
@@ -250,9 +264,21 @@ async function runAgentStage(
       }
       return { kind: 'fail', error: `agent "${stage.agent}" exited with ${result.exitCode}: ${result.failure?.message ?? result.stderr}` };
     }
-    persistAgentArtifact(stage.agent as AgentId, result.structured, ctx.services.artifacts);
+    const fallback = agent.executor === 'opencode'
+      ? undefined
+      : existingRoleArtifact(stage.agent as AgentId, ctx.services.artifacts);
+    const validated = validateAgentOutput(stage.agent as AgentId, result.structured ?? fallback);
+    if (validated) ctx.services.executions.writeStructuredOutput(executionId, validated);
+    if (result.structured || agent.executor === 'opencode') {
+      persistAgentArtifact(stage.agent as AgentId, validated, ctx.services.artifacts);
+    }
     ctx.services.executions.update(executionId, {
       status: 'completed', exit_code: 0, completed_at: new Date().toISOString(),
+    });
+    events.record('stage.completed', ctx.runId, {
+      stage: stage.id,
+      agent: stage.agent,
+      exitCode: 0,
     });
     return { kind: 'continue' };
   } catch (err) {
@@ -265,11 +291,37 @@ async function runAgentStage(
   }
 }
 
+function nativeRequestId(runId: string, executionId: string): string {
+  return `msg_volibear_${handoffHash({ runId, executionId } as never).slice(0, 20)}`;
+}
+
+function validateAgentOutput(role: AgentId, structured: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!structured || Object.keys(structured).length === 1 && typeof structured.output === 'string') {
+    throw new Error(`agent "${role}" did not return the required structured output`);
+  }
+  if (role === 'architect') return ArchitectureSchema.parse(structured);
+  if (role === 'developer' || role === 'fixer') return ImplementationSchema.parse(structured);
+  if (role === 'reviewer') return ReviewSchema.parse(structured);
+  return structured;
+}
+
+function existingRoleArtifact(role: AgentId, artifacts: ArtifactStore): Record<string, unknown> | undefined {
+  const kind = role === 'architect' ? 'architecture'
+    : role === 'developer' || role === 'fixer' ? 'implementation'
+      : role === 'reviewer' ? 'review'
+        : undefined;
+  if (!kind) return undefined;
+  const value = artifacts.read(kind);
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 function persistAgentArtifact(role: AgentId, structured: Record<string, unknown> | undefined, artifacts: ArtifactStore): void {
-  if (!structured || Object.keys(structured).length === 1 && typeof structured.output === 'string') return;
-  if (role === 'architect') artifacts.write('architecture', ArchitectureSchema.parse(structured));
-  if (role === 'developer' || role === 'fixer') artifacts.write('implementation', ImplementationSchema.parse(structured));
-  if (role === 'reviewer') artifacts.write('review', ReviewSchema.parse(structured));
+  if (!structured) return;
+  if (role === 'architect') artifacts.write('architecture', structured);
+  if (role === 'developer' || role === 'fixer') artifacts.write('implementation', structured);
+  if (role === 'reviewer') artifacts.write('review', structured);
   if (role === 'verifier') artifacts.writeRaw('verifier-report.json', JSON.stringify(structured, null, 2));
 }
 

@@ -19,7 +19,7 @@ import {
   RubberduckInteraction,
   RubberduckSnapshot,
 } from '@volibear/contracts';
-import { EventLog, ArtifactStore, RunStore } from '@volibear/core';
+import { EventLog, ArtifactStore, RunStore, StageExecutionStore } from '@volibear/core';
 import { RunOrchestrator } from './orchestrator.js';
 import { PipelineParser, validatePipelineAgents } from './pipeline.js';
 
@@ -559,6 +559,212 @@ describe('RunOrchestrator (mock end-to-end)', () => {
     // Artifacts exist
     expect(artifacts.read('requirements')).not.toBeNull();
     expect(artifacts.readRaw('architecture.md')).not.toBeNull();
+  });
+
+  it('reuses one persisted OpenCode primary session and persists artifacts before native handoffs', async () => {
+    const run = runStore.create('run-native', 'test-pipeline', 'native task');
+    const calls: Array<{ agent: string; nativeSessionId?: string; inputs: unknown; artifactReady: boolean }> = [];
+    let ensureCalls = 0;
+    const delegate = new MockExecutor();
+    const nativeExecutor = {
+      id: 'opencode',
+      capabilities: delegate.capabilities,
+      detect: async () => true,
+      ensureNativeSession: async ({ resumeSessionId }: { resumeSessionId?: string }) => {
+        ensureCalls++;
+        return {
+          transport: 'opencode-sdk' as const,
+          sessionId: resumeSessionId ?? 'ses_run_native',
+          nativeSessionId: resumeSessionId ?? 'ses_run_native',
+          serverUrl: 'http://127.0.0.1:4096',
+          recovered: Boolean(resumeSessionId),
+        };
+      },
+      runAgent: async (ec: import('@volibear/contracts').ExecutorContext) => {
+        calls.push({
+          agent: ec.agent,
+          nativeSessionId: ec.nativeSessionId,
+          inputs: ec.handoff?.inputs,
+          artifactReady: ec.agent === 'developer'
+            ? artifacts.exists('architecture')
+            : ec.agent === 'reviewer'
+              ? artifacts.exists('implementation')
+              : true,
+        });
+        const result = await delegate.runAgent(ec);
+        const kind = ec.agent === 'architect' ? 'architecture'
+          : ec.agent === 'developer' || ec.agent === 'fixer' ? 'implementation'
+            : ec.agent === 'reviewer' ? 'review'
+              : undefined;
+        return kind ? { ...result, structured: artifacts.read(kind) as Record<string, unknown> } : result;
+      },
+    };
+    const nativeAgents = new Map(
+      BUILTIN_AGENTS.map((agent) => [agent.id, { ...agent, executor: 'opencode', router: 'native' }] as [string, AgentDefinition]),
+    );
+    const pipeline = makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+      { id: 'developer', type: 'agent', agent: 'developer' },
+      { id: 'reviewer', type: 'agent', agent: 'reviewer' },
+      { id: 'verify', type: 'verify' },
+      { id: 'verifier', type: 'agent', agent: 'verifier' },
+    ]);
+    const orchestrator = new RunOrchestrator({
+      runStore, events, artifacts, cwd: dir,
+      agents: nativeAgents,
+      executors: new Map([['opencode', nativeExecutor]]),
+      config: { repair: { max_cycles: 3, reject_on: ['critical', 'high'] }, verification: { commands: ['echo ok'] } },
+      rubberduck: mockDriver,
+    });
+
+    expect(await orchestrator.run(pipeline, run)).toBe('PASS');
+    expect(ensureCalls).toBe(1);
+    expect(runStore.load(run.id)?.native_session_id).toBe('ses_run_native');
+    expect(calls.every((call) => call.nativeSessionId === 'ses_run_native')).toBe(true);
+    expect(calls.find((call) => call.agent === 'developer')).toEqual(expect.objectContaining({ artifactReady: true }));
+    expect(calls.find((call) => call.agent === 'reviewer')).toEqual(expect.objectContaining({ artifactReady: true }));
+    expect((calls.find((call) => call.agent === 'developer')?.inputs as Record<string, unknown>).architecture).toBeTruthy();
+    expect((calls.find((call) => call.agent === 'reviewer')?.inputs as Record<string, unknown>).implementation).toBeTruthy();
+
+    const persisted = runStore.load(run.id)!;
+    expect(await orchestrator.run(pipeline, persisted)).toBe('PASS');
+    expect(ensureCalls).toBe(2);
+  });
+
+  it('fails closed when a persisted OpenCode primary session is lost', async () => {
+    const created = runStore.create('run-native-lost', 'test-pipeline', 'resume task');
+    const persisted = runStore.update(created.id, { native_session_id: 'ses_missing', state: 'ARCHITECTURE' })!;
+    const delegate = new MockExecutor();
+    const executor = {
+      id: 'opencode', capabilities: delegate.capabilities, detect: async () => true,
+      ensureNativeSession: async () => { throw new Error('persisted primary session not found'); },
+      runAgent: delegate.runAgent.bind(delegate),
+    };
+    const nativeAgents = new Map(
+      BUILTIN_AGENTS.map((agent) => [agent.id, { ...agent, executor: 'opencode', router: 'native' }] as [string, AgentDefinition]),
+    );
+    const orchestrator = new RunOrchestrator({
+      runStore, events, artifacts, cwd: dir, agents: nativeAgents,
+      executors: new Map([['opencode', executor]]),
+      config: { repair: { max_cycles: 3, reject_on: ['critical', 'high'] }, verification: { commands: [] } },
+      rubberduck: mockDriver,
+    });
+
+    expect(await orchestrator.run(makePipeline([{ id: 'verify', type: 'verify' }]), persisted)).toBe('FAIL');
+    expect(runStore.load(created.id)?.error).toContain('persisted primary session not found');
+  });
+
+  it('fails without persisting artifacts when a native stage returns malformed structured output', async () => {
+    const run = runStore.create('run-native-malformed', 'test-pipeline', 'malformed output task');
+    const nativeExecutor = {
+      id: 'opencode',
+      capabilities: mockExecutor.capabilities,
+      detect: async () => true,
+      ensureNativeSession: async () => ({
+        transport: 'opencode-sdk' as const,
+        sessionId: 'ses_malformed',
+        nativeSessionId: 'ses_malformed',
+        serverUrl: 'http://127.0.0.1:4096',
+      }),
+      runAgent: async () => ({
+        exitCode: 0,
+        stdout: 'I did the work but returned no JSON',
+        stderr: '',
+        structured: { output: 'I did the work but returned no JSON' },
+      }),
+    };
+    const nativeAgents = new Map(
+      BUILTIN_AGENTS.map((agent) => [agent.id, { ...agent, executor: 'opencode', router: 'native' }] as [string, AgentDefinition]),
+    );
+    const orchestrator = new RunOrchestrator({
+      runStore, events, artifacts, cwd: dir, agents: nativeAgents,
+      executors: new Map([['opencode', nativeExecutor]]),
+      config: { repair: { max_cycles: 3, reject_on: ['critical', 'high'] }, verification: { commands: [] } },
+      rubberduck: mockDriver,
+    });
+
+    expect(await orchestrator.run(makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+    ]), run)).toBe('FAIL');
+    expect(runStore.load(run.id)?.error).toContain('did not return the required structured output');
+    expect(artifacts.read('architecture')).toBeNull();
+    expect(artifacts.readRaw('architecture.md')).toBeNull();
+    expect(events.filter('stage.failed').some((event) => JSON.stringify(event.data ?? {}).includes('structured output'))).toBe(true);
+  });
+
+  it('persists cancellation state for an interrupted native stage', async () => {
+    const run = runStore.create('run-native-cancelled', 'test-pipeline', 'cancelled task');
+    const nativeExecutor = {
+      id: 'opencode',
+      capabilities: mockExecutor.capabilities,
+      detect: async () => true,
+      ensureNativeSession: async () => ({
+        transport: 'opencode-sdk' as const,
+        sessionId: 'ses_cancelled',
+        nativeSessionId: 'ses_cancelled',
+        serverUrl: 'http://127.0.0.1:4096',
+      }),
+      runAgent: async () => ({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'cancelled by user',
+        failure: { code: 'CANCELLED' as const, message: 'cancelled by user', retryable: false },
+      }),
+    };
+    const nativeAgents = new Map(
+      BUILTIN_AGENTS.map((agent) => [agent.id, { ...agent, executor: 'opencode', router: 'native' }] as [string, AgentDefinition]),
+    );
+    const orchestrator = new RunOrchestrator({
+      runStore, events, artifacts, cwd: dir, agents: nativeAgents,
+      executors: new Map([['opencode', nativeExecutor]]),
+      config: { repair: { max_cycles: 3, reject_on: ['critical', 'high'] }, verification: { commands: [] } },
+      rubberduck: mockDriver,
+    });
+
+    expect(await orchestrator.run(makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+    ]), run)).toBe('FAIL');
+    const execution = new StageExecutionStore(artifacts.dir).load('architect-cycle-0-architect-attempt-1');
+    expect(execution?.status).toBe('cancelled');
+    expect(runStore.load(run.id)?.state).toBe('FAIL');
+  });
+
+  it('surfaces native session errors as a failed run with the executor diagnostic', async () => {
+    const run = runStore.create('run-native-session-error', 'test-pipeline', 'session error task');
+    const nativeExecutor = {
+      id: 'opencode',
+      capabilities: mockExecutor.capabilities,
+      detect: async () => true,
+      ensureNativeSession: async () => ({
+        transport: 'opencode-sdk' as const,
+        sessionId: 'ses_error',
+        nativeSessionId: 'ses_error',
+        serverUrl: 'http://127.0.0.1:4096',
+      }),
+      runAgent: async () => {
+        throw new Error('OpenCode session ses_child failed: {"name":"SessionError"}');
+      },
+    };
+    const nativeAgents = new Map(
+      BUILTIN_AGENTS.map((agent) => [agent.id, { ...agent, executor: 'opencode', router: 'native' }] as [string, AgentDefinition]),
+    );
+    const orchestrator = new RunOrchestrator({
+      runStore, events, artifacts, cwd: dir, agents: nativeAgents,
+      executors: new Map([['opencode', nativeExecutor]]),
+      config: { repair: { max_cycles: 3, reject_on: ['critical', 'high'] }, verification: { commands: [] } },
+      rubberduck: mockDriver,
+    });
+
+    expect(await orchestrator.run(makePipeline([
+      { id: 'rubberduck', type: 'rubberduck' },
+      { id: 'architect', type: 'agent', agent: 'architect' },
+    ]), run)).toBe('FAIL');
+    expect(runStore.load(run.id)?.error).toContain('OpenCode session ses_child failed');
+    const execution = new StageExecutionStore(artifacts.dir).load('architect-cycle-0-architect-attempt-1');
+    expect(execution?.status).toBe('failed');
   });
 
   it('PASSes when review finds nothing above threshold', async () => {

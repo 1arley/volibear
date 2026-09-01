@@ -23,3 +23,5 @@ Rubberduck must:
 - allow the user to delegate a decision
 - generate structured requirements
 - require final lock before architecture starts
+- return only the structured response requested in the current handoff
+- never invoke another agent or reconstruct the pipeline

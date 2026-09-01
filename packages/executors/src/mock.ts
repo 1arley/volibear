@@ -168,7 +168,7 @@ export class MockExecutor implements Executor {
     };
   }
 
-  private verifier(ctx: ExecutorContext): ExecutorResult {
+  private verifier(_ctx: ExecutorContext): ExecutorResult {
     return {
       exitCode: 0,
       stdout: '[mock] verifier summarized deterministic results',

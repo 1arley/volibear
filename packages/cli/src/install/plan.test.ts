@@ -50,7 +50,11 @@ describe('createInstallPlan', () => {
     expect(bridges[0].path).toMatch(/\.opencode\/agents\/volibear\.md$/);
     expect(bridges.every((file) => file.action === 'create')).toBe(true);
     expect(bridges.slice(1).every((file) => file.content?.includes('mode: subagent'))).toBe(true);
-    expect(bridges.slice(1).every((file) => file.content?.includes('model: 9router/build'))).toBe(true);
+    expect(bridges.slice(1).every((file) => file.content?.includes('model: 9router/'))).toBe(true);
+    expect(bridges.find((file) => file.path.endsWith('volibear-rubberduck.md'))?.content).toContain('model: 9router/rubberduck');
+    expect(bridges.find((file) => file.path.endsWith('volibear-architect.md'))?.content).toContain('model: 9router/architect');
+    expect(bridges.find((file) => file.path.endsWith('volibear-reviewer.md'))?.content).toContain('model: 9router/reviewer');
+    expect(bridges.find((file) => file.path.endsWith('volibear-verifier.md'))?.content).toContain('model: 9router/verifier');
     expect(bridges.slice(1).every((file) => file.content?.includes('task: deny'))).toBe(true);
   });
 

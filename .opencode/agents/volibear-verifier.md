@@ -1,7 +1,7 @@
 ---
 description: Synthesizes deterministic verification results
 mode: subagent
-model: 9router/build
+model: 9router/verifier
 permission:
   edit: deny
   bash: allow

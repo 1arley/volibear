@@ -1,7 +1,7 @@
 ---
 description: Reviews implementation and returns structured findings
 mode: subagent
-model: 9router/build
+model: 9router/reviewer
 permission:
   edit: deny
   bash: deny

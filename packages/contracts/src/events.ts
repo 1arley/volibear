@@ -24,6 +24,9 @@ export const EventTypeSchema = z.enum([
   'gate.passed',
   'gate.failed',
   'permission.violation',
+  'opencode.session.created',
+  'opencode.session.recovered',
+  'opencode.subagent.updated',
 ]);
 
 // ── Event ──────────────────────────────────────────────

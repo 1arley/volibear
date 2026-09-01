@@ -1,7 +1,7 @@
 ---
 description: Designs an implementation from locked requirements
 mode: subagent
-model: 9router/build
+model: 9router/architect
 permission:
   edit: deny
   bash: deny

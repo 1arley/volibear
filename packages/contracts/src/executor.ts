@@ -49,6 +49,12 @@ export interface ExecutorContext {
   executionId?: string;
   /** Previously persisted session to reconcile after a lost local response. */
   resumeSessionId?: string;
+  /** Active OpenCode primary session for native in-session delegation. */
+  nativeSessionId?: string;
+  /** Stable OpenCode user-message id used to correlate one native subtask. */
+  nativeRequestMessageId?: string;
+  /** Persisted OpenCode child session for native recovery. */
+  resumeChildSessionId?: string;
   /** Cooperative cancellation for SDK-based executors. */
   abortSignal?: AbortSignal;
   /** Persist transport metadata as soon as it becomes available. */
@@ -73,6 +79,9 @@ export interface ExecutorResult {
 export interface ExecutorMetadata {
   transport: 'cli' | 'opencode-sdk' | 'mock';
   sessionId?: string;
+  nativeSessionId?: string;
+  requestMessageId?: string;
+  childSessionId?: string;
   remoteAgent?: string;
   serverUrl?: string;
   startedAt?: string;
@@ -102,6 +111,13 @@ export interface Executor {
   detect(): Promise<boolean>;
   /** Run an agent-style invocation */
   runAgent(ctx: ExecutorContext): Promise<ExecutorResult>;
+  /** Create or validate a caller-owned native session for one pipeline run. */
+  ensureNativeSession?(ctx: {
+    cwd: string;
+    runId: string;
+    resumeSessionId?: string;
+    abortSignal?: AbortSignal;
+  }): Promise<ExecutorMetadata>;
   /** Run a plain shell command */
   runCommand?(ctx: ExecutorContext): Promise<ExecutorResult>;
   /** Release executor-owned resources (never external services). */

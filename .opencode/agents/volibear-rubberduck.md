@@ -1,7 +1,7 @@
 ---
 description: Clarifies intent and produces locked requirements
 mode: subagent
-model: 9router/build
+model: 9router/rubberduck
 permission:
   edit: deny
   bash: deny

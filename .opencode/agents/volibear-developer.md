@@ -1,7 +1,7 @@
 ---
 description: Implements the approved Volibear architecture
 mode: subagent
-model: 9router/build
+model: opencode/big-pickle
 permission:
   edit: allow
   bash: allow

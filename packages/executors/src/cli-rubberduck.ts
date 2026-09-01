@@ -301,11 +301,21 @@ Output ONLY the JSON object, nothing else.`;
     };
     const result = await this.executor.runAgent(ctx);
     this.context.execution?.complete(operation, result);
+    if (result.exitCode !== 0) {
+      throw new Error(result.failure?.message ?? (result.stderr || `rubberduck executor exited with ${result.exitCode}`));
+    }
     return result;
   }
 
   private parseQuestions(stdout: string): RubberduckQuestion[] {
-    const json = this.parseJson(stdout);
+    let json: unknown;
+    try {
+      json = this.parseJson(stdout);
+    } catch (error) {
+      const recovered = this.parseRenderedQuestions(stdout);
+      if (recovered.length > 0) return recovered;
+      throw error;
+    }
     if (!Array.isArray(json)) {
       throw new Error('rubberduck driver returned non-array for questions');
     }
@@ -316,6 +326,22 @@ Output ONLY the JSON object, nothing else.`;
         ? q.type
         : 'BLOCKING') as 'BLOCKING' | 'OPTIONAL' | 'INFERABLE',
     }));
+  }
+
+  /** Recover OpenCode-rendered question lists when a model wraps the requested JSON. */
+  private parseRenderedQuestions(output: string): RubberduckQuestion[] {
+    const questions: RubberduckQuestion[] = [];
+    const defaultType = /\bOPTIONAL\b/i.test(output) && !/\bBLOCKING\b/i.test(output)
+      ? 'OPTIONAL'
+      : /\bINFERABLE\b/i.test(output) && !/\bBLOCKING\b/i.test(output)
+        ? 'INFERABLE'
+        : 'BLOCKING';
+    const pattern = /(?:\*\*)?(Q\d+)(?:\*\*)?\s*(?:—|–|-|:)+\s*([^\n]+)/gi;
+    for (const match of output.matchAll(pattern)) {
+      const text = match[2].trim().replace(/\*\*$/g, '').trim();
+      if (text) questions.push({ id: match[1].toUpperCase(), text, type: defaultType });
+    }
+    return questions;
   }
 
   private parseJson(stdout: string): unknown {

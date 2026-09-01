@@ -1,6 +1,6 @@
 # Verifier
 
-Run deterministic verification commands.
+Interpret and summarize deterministic verification results produced by Volibear.
 
 ## Permissions
 
@@ -11,12 +11,12 @@ Run deterministic verification commands.
 ## Input
 
 You receive:
-- `verification.commands` (list of commands to run)
-- Repository source code
+- `verification.json`, produced by Volibear
+- configured command names for context
 
 ## Output
 
-### verification.json (written to run directory)
+Return one JSON report as the final response:
 ```json
 {
   "commands": [
@@ -34,8 +34,8 @@ You receive:
 
 ## Behavior
 
-- Run each command in the project root
-- Record pass/fail and exit code for each command
-- If any command fails, set overall passed=false
+- Never rerun or replace Volibear's deterministic verification authority
+- Preserve every command pass/fail and exit code exactly
+- If any deterministic command failed, the report must remain failed
 - Do not modify code
-- Prefer command execution over LLM judgment
+- Do not invoke other agents or implement pipeline stages

@@ -83,6 +83,14 @@ export class RunOrchestrator {
       events.record('run.started', run.id, { pipeline: pipeline.name, task: run.task });
     }
 
+    const nativeState = await this.ensureNativeSession(run);
+    if (nativeState.kind === 'fail') {
+      events.record('run.failed', run.id, { stage: run.current_stage, error: nativeState.error });
+      runStore.update(run.id, { state: 'FAIL', error: nativeState.error });
+      return 'FAIL';
+    }
+    if (nativeState.run) run = nativeState.run;
+
     const ctx = {
       runId: run.id,
       services: this.services,
@@ -182,6 +190,43 @@ export class RunOrchestrator {
     events.record('run.completed', run.id, { status: 'pass' });
     run = runStore.update(run.id, { state: 'PASS', current_stage: undefined }) ?? run;
     return 'PASS';
+  }
+
+  private async ensureNativeSession(run: Run): Promise<
+    { kind: 'continue'; run?: Run } | { kind: 'fail'; error: string }
+  > {
+    const nativeAgents = [...this.opts.agents.values()].filter(
+      (agent) => agent.executor === 'opencode' && agent.router === 'native',
+    );
+    if (nativeAgents.length === 0) return { kind: 'continue' };
+    const executor = this.opts.executors.get('opencode');
+    if (!executor?.ensureNativeSession) {
+      return { kind: 'fail', error: 'OpenCode executor does not support native run sessions' };
+    }
+    try {
+      const metadata = await executor.ensureNativeSession({
+        cwd: this.opts.cwd,
+        runId: run.id,
+        resumeSessionId: run.native_session_id,
+      });
+      if (!metadata.nativeSessionId) {
+        return { kind: 'fail', error: 'OpenCode did not return a native primary session id' };
+      }
+      this.services.nativeSessionId = metadata.nativeSessionId;
+      const updated = this.opts.runStore.update(run.id, {
+        native_session_id: metadata.nativeSessionId,
+        native_server_url: metadata.serverUrl,
+      }) ?? run;
+      this.opts.events.record(
+        metadata.recovered ? 'opencode.session.recovered' : 'opencode.session.created',
+        run.id,
+        { session_id: metadata.nativeSessionId, server_url: metadata.serverUrl },
+      );
+      return { kind: 'continue', run: updated };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { kind: 'fail', error: `OpenCode native session unavailable: ${message}` };
+    }
   }
 }
 

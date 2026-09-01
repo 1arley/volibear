@@ -241,7 +241,14 @@ export class App {
           }, handoff);
           return {
             executionId,
-            resumeSessionId: existing?.session_id,
+            resumeSessionId: executorId === 'opencode' && rubberduckAgent?.router === 'native'
+              ? undefined
+              : existing?.session_id,
+            nativeSessionId: executorId === 'opencode' && rubberduckAgent?.router === 'native'
+              ? this.runStore.load(_runId)?.native_session_id
+              : undefined,
+            nativeRequestMessageId: existing?.request_message_id ?? `msg_volibear_rubberduck_${createHash('sha256').update(`${_runId}:${executionId}`).digest('hex').slice(0, 20)}`,
+            resumeChildSessionId: existing?.child_session_id,
             handoff,
             onMetadata: (metadata) => {
               executionStore.update(executionId, {
@@ -249,6 +256,9 @@ export class App {
                   ? 'running'
                   : 'session_created',
                 session_id: metadata.sessionId,
+                native_session_id: metadata.nativeSessionId,
+                request_message_id: metadata.requestMessageId,
+                child_session_id: metadata.childSessionId,
                 remote_agent: metadata.remoteAgent,
                 server_url: metadata.serverUrl,
                 message_id: metadata.messageId,

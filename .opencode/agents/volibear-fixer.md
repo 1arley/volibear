@@ -1,7 +1,7 @@
 ---
 description: Fixes rejected review findings without redesigning
 mode: subagent
-model: 9router/build
+model: opencode/big-pickle
 permission:
   edit: allow
   bash: allow

@@ -12,6 +12,7 @@ packages/*/dist/
 # volibear runtime state
 .volibear/.runs/
 .volibear/.runs
+.volibear/
 
 # test/coverage
 coverage/

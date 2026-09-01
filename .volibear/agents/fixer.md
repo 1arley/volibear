@@ -17,7 +17,7 @@ You receive:
 
 ## Output (Required)
 
-Write these files to the run directory:
+Return one JSON object as the final response. Volibear validates and persists it as `implementation.json`.
 
 ### implementation.json
 ```json
@@ -36,3 +36,4 @@ Write these files to the run directory:
 - Preserve the approved architecture
 - Do not introduce new features or redesigns
 - Run tests when available
+- Do not invoke other agents or implement pipeline stages

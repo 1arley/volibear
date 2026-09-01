@@ -32,6 +32,9 @@ export const RunSchema = z.object({
   current_stage: z.string().optional(),
   completed_stages: z.array(z.string()).default([]),
   repair_cycle: z.number().int().nonnegative().default(0),
+  /** OpenCode primary session shared by all native stages in this run. */
+  native_session_id: z.string().optional(),
+  native_server_url: z.string().url().optional(),
   /** Monotonic creation sequence within the project; orders same-ms runs. */
   seq: z.number().int().nonnegative().optional(),
   error: z.string().optional(),

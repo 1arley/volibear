@@ -83,6 +83,14 @@ describe('CliRubberduckDriver', () => {
       expect(questions[0].id).toBe('Q1');
     });
 
+    it('recovers a rendered OpenCode question when JSON is wrapped away', async () => {
+      const executor = createFakeExecutor({
+        rubberduck: 'Returned 1 BLOCKING question:\n\n**Q1** — Preserve the trailing newline?',
+      });
+      const questions = await createDriver(executor).discover('task', {});
+      expect(questions).toEqual([{ id: 'Q1', text: 'Preserve the trailing newline?', type: 'BLOCKING' }]);
+    });
+
     it('throws on non-JSON output', async () => {
       const executor = createFakeExecutor({
         rubberduck: 'I do not understand the request.',
