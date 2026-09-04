@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
+import { spinner, outro } from '@clack/prompts';
 import { CliOptions } from '../cli.js';
 import { bundledPipelinesDir, bundledAgentsDir } from '../app.js';
 import { getHomeDir, displayPath } from '../install/paths.js';
@@ -107,7 +108,7 @@ export function selectionFromFlags(
     ? (options.executor as InstallExecutor)
     : integrations.includes('opencode') ? 'opencode' : 'mock';
   if (!KNOWN_EXECUTORS.includes(executor as (typeof KNOWN_EXECUTORS)[number])) {
-    return { ok: false, message: `Unknown executor "${executor}". Available: ${KNOWN_EXECUTORS.join(', ')}.` };
+    return { ok: false, message: `Unknown executor "${options.executor}". Available: ${KNOWN_EXECUTORS.join(', ')}.` };
   }
 
   return {
@@ -165,13 +166,9 @@ export async function runInstall(
 // ── Interactive wizard ──────────────────────────────────
 
 async function runWizardInstall(): Promise<number> {
-  // The wizard derives the relevant existing config/bridge paths itself,
-  // re-querying after every scope/integration change (MED-3), so overwrite
-  // prompts only cover files the final selection would touch.
   const outcome = await runInstallWizard();
 
   if (outcome.kind === 'cancelled') {
-    console.log('Installation cancelled.');
     return 2;
   }
 
@@ -180,14 +177,14 @@ async function runWizardInstall(): Promise<number> {
     ...outcome.selection.overwriteConfigPaths,
   ];
 
+  // Wizard uses smart defaults: pipelines=feature+fix, executor=auto, router=native
+  const integrations = outcome.selection.integrations;
   const selection: InstallSelection = {
     scope: outcome.selection.scope,
-    integrations: outcome.selection.integrations,
-    pipelines: outcome.selection.pipelines,
-    executor: outcome.selection.executor,
-    router: outcome.selection.router,
-    // force=false: the plan starts by keeping every existing file, then
-    // runNonInteractive flips only the paths the wizard explicitly chose.
+    integrations,
+    pipelines: ['feature', 'fix'],
+    executor: integrations.includes('opencode') ? 'opencode' : 'mock',
+    router: 'native',
     force: false,
   };
 
@@ -233,10 +230,7 @@ async function runNonInteractive(
   if (forcedOverwritePaths) {
     for (const file of plan.files) {
       if (file.action === 'keep' && forcedOverwritePaths.includes(file.path)) {
-        // 'overwrite' (not 'create') so the report says "overwritten" (LOW-6).
         file.action = 'overwrite';
-        // Config files always carry content in the plan; bridge files keep
-        // content undefined while 'keep', so re-read the template here.
         if (file.integration) {
           const roleMatch = file.path.match(/volibear-(rubberduck|architect|developer|reviewer|fixer|verifier)\.md$/);
           if (file.integration === 'opencode' && roleMatch) {
@@ -251,20 +245,21 @@ async function runNonInteractive(
     }
   }
 
-  const result = applyInstallPlan(plan, realFS);
+  const s = spinner();
+  s.start('Installing files...');
 
-  // ── Report ──────────────────────────────────────────────
-  const scopeLabel = selection.scope === 'both'
-    ? 'in project and global scopes'
-    : selection.scope === 'global'
-      ? 'globally'
-      : 'in this project';
+  let result;
+  try {
+    result = applyInstallPlan(plan, realFS);
+  } catch (err) {
+    s.stop('Install failed.');
+    throw err;
+  }
 
-  // MED-4: surface per-file I/O failures with context about what was
-  // already applied before the failure stopped the install.
   const failures = result.files.filter((f) => f.outcome === 'failed');
   if (failures.length > 0) {
-    console.error('Volibear install failed.\n');
+    s.stop('Install completed with errors.');
+
     const appliedBefore = result.files.filter(
       (f) => f.outcome === 'written' || f.outcome === 'overwritten',
     );
@@ -282,37 +277,17 @@ async function runNonInteractive(
     return 1;
   }
 
-  const byScope: Record<string, { written: string[]; overwritten: string[]; kept: string[] }> = {};
-  for (const file of result.files) {
-    const key = file.file.scope;
-    if (!byScope[key]) byScope[key] = { written: [], overwritten: [], kept: [] };
-    if (file.outcome === 'written') byScope[key].written.push(file.file.path);
-    else if (file.outcome === 'overwritten') byScope[key].overwritten.push(file.file.path);
-    else if (file.outcome === 'kept') byScope[key].kept.push(file.file.path);
-  }
+  const written = result.files.filter((f) => f.outcome === 'written' || f.outcome === 'overwritten');
+  s.stop(`Installed ${written.length} file${written.length !== 1 ? 's' : ''}`);
 
-  console.log(`Volibear installed ${scopeLabel}.\n`);
+  // ── Next steps ──────────────────────────────────────
+  const scopeLabel = selection.scope === 'both'
+    ? 'in project and global scopes'
+    : selection.scope === 'global'
+      ? 'globally'
+      : 'in this project';
 
-  for (const [scope, group] of Object.entries(byScope)) {
-    console.log(`  ${scope}:`);
-    if (group.written.length > 0) {
-      console.log(`    written: ${group.written.map((p) => displayPath(p, homeDir)).join(', ')}`);
-    }
-    if (group.overwritten.length > 0) {
-      console.log(`    overwritten: ${group.overwritten.map((p) => displayPath(p, homeDir)).join(', ')}`);
-    }
-    if (group.kept.length > 0) {
-      console.log(`    kept: ${group.kept.map((p) => displayPath(p, homeDir)).join(', ')}`);
-    }
-  }
-
-  for (const warning of result.warnings) {
-    console.log(`  note: ${warning}`);
-  }
-
-  if (forcedOverwritePaths === undefined && plan.files.some((f) => f.action === 'keep')) {
-    console.log('  note: use --force to overwrite existing files.');
-  }
+  outro(`Volibear installed ${scopeLabel}.\n\nRun ${written.length > 0 ? '`volibear build feature`' : '`volibear install`'} to get started.`);
 
   return 0;
 }

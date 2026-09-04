@@ -11,10 +11,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@clack/prompts": "^0.10.1",
     "@volibear/contracts": "workspace:*",
     "@volibear/core": "workspace:*",
-    "@volibear/runtime": "workspace:*",
-    "@volibear/executors": "workspace:*"
+    "@volibear/executors": "workspace:*",
+    "@volibear/runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

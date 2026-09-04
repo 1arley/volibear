@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { runInstall } from './commands/install.js';
 import { runBuild } from './commands/build.js';
 import { runFix } from './commands/fix.js';
@@ -17,6 +18,8 @@ Commands:
   update                      Refresh bundled pipelines and agent instructions
   config                      Show the resolved configuration
   help                        Show available commands and pipelines
+
+First run: volibear detects your coding CLIs and guides you through setup.
 
 Options:
   --executor <name>           Select coding CLI (mock, opencode, codex, claude)
@@ -162,6 +165,10 @@ export async function main(args: string[]): Promise<number> {
 
   switch (command) {
     case 'help':
+      // Auto-install on first run: no args + no .volibear/ + TTY
+      if (process.stdin.isTTY && !existsSync('.volibear')) {
+        return runInstall([], options);
+      }
       console.log(HELP);
       return 0;
     case 'version':
