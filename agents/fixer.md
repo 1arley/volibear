@@ -37,3 +37,12 @@ Return one JSON object as the final response. Volibear validates and persists it
 - Do not introduce new features or redesigns
 - Run tests when available
 - Do not invoke other agents or implement pipeline stages
+
+## Skills
+
+This agent uses the following skills to enhance its work:
+
+- `systematic-debugging` — structured debugging approach before proposing fixes
+- `error-flow-audit` — investigate partial failures, timeouts, and inconsistent states
+- `ponytail` — minimal fix, shortest diff that addresses the root cause
+- `diagnosing-bugs` — disciplined approach to hard bugs with feedback loops

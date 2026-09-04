@@ -50,3 +50,12 @@ Return one JSON object as the final response. Volibear validates and persists it
 - approved=true means no findings at critical or high severity
 - approved=false means at least one critical or high finding exists
 - Do not invoke other agents or implement pipeline stages
+
+## Skills
+
+This agent uses the following skills to enhance its work:
+
+- `code-quality-security-stability-review` — deep analysis of quality, security, and stability
+- `requesting-code-review` — structured review workflow
+- `ponytail-review` — review focused exclusively on over-engineering
+- `code-review` — standards and spec conformance review

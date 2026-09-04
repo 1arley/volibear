@@ -25,3 +25,13 @@ Rubberduck must:
 - require final lock before architecture starts
 - return only the structured response requested in the current handoff
 - never invoke another agent or reconstruct the pipeline
+
+## Skills
+
+This agent uses the following skills to enhance its work:
+
+- `grill-me` / `grilling` — relentless interview technique with design-tree rounds
+- `research-router` — routes research to the right sources based on problem type
+- `reference-research` — synthesizes external references into actionable patterns
+- `to-spec` — synthesizes context and conversation into a structured spec
+- `triage` — classifies issues with state-machine workflow

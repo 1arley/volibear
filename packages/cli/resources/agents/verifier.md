@@ -39,3 +39,10 @@ Return one JSON report as the final response:
 - If any deterministic command failed, the report must remain failed
 - Do not modify code
 - Do not invoke other agents or implement pipeline stages
+
+## Skills
+
+This agent uses the following skills to enhance its work:
+
+- `verification-before-completion` — require evidence before asserting correctness
+- `ponytail-gain` — measure and report actual impact of changes

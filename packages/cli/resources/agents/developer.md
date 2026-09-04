@@ -39,3 +39,12 @@ Return one JSON object as the final response. Volibear validates and persists it
 - Run tests when available
 - Follow existing code conventions in the repository
 - Do not invoke other agents or implement pipeline stages
+
+## Skills
+
+This agent uses the following skills to enhance its work:
+
+- `ponytail` — enforce simplicity, shortest working diff, stdlib first
+- `test-driven-development` — write tests before implementation
+- `implementation-research` — research how specific problems are solved in practice
+- `implement` — structured implementation workflow with typechecking and test runs

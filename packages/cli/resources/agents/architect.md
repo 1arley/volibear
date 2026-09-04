@@ -40,3 +40,14 @@ Return one JSON object as the final response. Volibear validates and persists it
 - Keep the architecture simple and implementable
 - Prefer incremental changes over large rewrites
 - Do not invoke other agents or implement pipeline stages
+
+## Skills
+
+This agent uses the following skills to enhance its work:
+
+- `feature-architect` — systematic feature implementation workflow
+- `ponytail` — enforce simplicity, YAGNI, shortest path to done
+- `improve-codebase-architecture` — deep codebase analysis for improvement opportunities
+- `ponytail-audit` — detect over-engineering across the codebase
+- `codebase-design` — design deep modules with small interfaces at clean seams
+- `domain-modeling` — actively build and sharpen the project's domain model
